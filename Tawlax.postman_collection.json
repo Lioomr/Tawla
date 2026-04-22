@@ -1,0 +1,701 @@
+{
+  "info": {
+    "_postman_id": "1d5deca0-b71f-4db4-a1bc-587fcbf9c6e6",
+    "name": "Tawlax API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection for the current Tawlax backend endpoints."
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "table_token",
+      "value": "demo_table_token_001"
+    },
+    {
+      "key": "invalid_table_token",
+      "value": "wrong_token"
+    },
+    {
+      "key": "session_token",
+      "value": ""
+    },
+    {
+      "key": "cola_item_id",
+      "value": ""
+    },
+    {
+      "key": "burger_item_id",
+      "value": ""
+    },
+    {
+      "key": "order_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "Start Session - Success",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.collectionVariables.set('session_token', response.session_token);",
+                  "",
+                  "pm.test('Session token returned', function () {",
+                  "    pm.expect(response.session_token).to.be.a('string');",
+                  "});",
+                  "",
+                  "pm.test('Expires at returned', function () {",
+                  "    pm.expect(response.expires_at).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"table_token\": \"{{table_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/table/session/start/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "table",
+                "session",
+                "start",
+                ""
+              ]
+            },
+            "description": "Creates a temporary customer session from a valid table token."
+          },
+          "response": []
+        },
+        {
+          "name": "Start Session - Unknown Table",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.test('Error message matches', function () {",
+                  "    pm.expect(response.error.code).to.eql('table_not_found');",
+                  "    pm.expect(response.error.message).to.eql('table not found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"table_token\": \"{{invalid_table_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/table/session/start/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "table",
+                "session",
+                "start",
+                ""
+              ]
+            },
+            "description": "Verifies the API rejects unknown table tokens."
+          },
+          "response": []
+        },
+        {
+          "name": "Start Session - Missing Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.test('Error message matches', function () {",
+                  "    pm.expect(response.error.code).to.eql('invalid_request');",
+                  "    pm.expect(response.error.message).to.eql('invalid request');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/table/session/start/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "table",
+                "session",
+                "start",
+                ""
+              ]
+            },
+            "description": "Verifies the API rejects missing table_token input."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Menu - Success",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.test('Categories returned', function () {",
+                  "    pm.expect(response.categories).to.be.an('array');",
+                  "});",
+                  "",
+                  "const drinks = response.categories.find(category => category.name === 'Drinks');",
+                  "const meals = response.categories.find(category => category.name === 'Meals');",
+                  "if (drinks && drinks.items.length > 0) {",
+                  "    pm.collectionVariables.set('cola_item_id', String(drinks.items[0].id));",
+                  "}",
+                  "if (meals && meals.items.length > 0) {",
+                  "    pm.collectionVariables.set('burger_item_id', String(meals.items[0].id));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Session-Token",
+                "value": "{{session_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/menu/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "menu",
+                ""
+              ]
+            },
+            "description": "Returns the available menu for the restaurant attached to the active session."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Menu - Invalid Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.test('Error message matches', function () {",
+                  "    pm.expect(response.error.code).to.eql('invalid_session');",
+                  "    pm.expect(response.error.message).to.eql('invalid session');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Session-Token",
+                "value": "bad_session_token"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/menu/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "menu",
+                ""
+              ]
+            },
+            "description": "Verifies the API rejects invalid session tokens."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Menu - Missing Session Header",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.test('Error message matches', function () {",
+                  "    pm.expect(response.error.code).to.eql('invalid_session');",
+                  "    pm.expect(response.error.message).to.eql('invalid session');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/menu/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "menu",
+                ""
+              ]
+            },
+            "description": "Verifies the API rejects requests without X-Session-Token."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Order - Success",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.collectionVariables.set('order_id', response.order_id);",
+                  "",
+                  "pm.test('Order token returned', function () {",
+                  "    pm.expect(response.order_id).to.be.a('string');",
+                  "    pm.expect(response.order_id.startsWith('ord_')).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Session-Token",
+                "value": "{{session_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"menu_item_id\": {{cola_item_id}},\n      \"quantity\": 2,\n      \"notes\": \"No ice\"\n    },\n    {\n      \"menu_item_id\": {{burger_item_id}},\n      \"quantity\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                ""
+              ]
+            },
+            "description": "Creates an order from the active session using IDs captured from the menu response."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Order - Invalid Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Session-Token",
+                "value": "bad_session_token"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"menu_item_id\": 1,\n      \"quantity\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                ""
+              ]
+            },
+            "description": "Verifies invalid sessions are rejected during order creation."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Order - Invalid Quantity",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Session-Token",
+                "value": "{{session_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"menu_item_id\": {{cola_item_id}},\n      \"quantity\": 0\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                ""
+              ]
+            },
+            "description": "Verifies quantity validation during order creation."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Order - Invalid Item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Session-Token",
+                "value": "{{session_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"menu_item_id\": 999999,\n      \"quantity\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                ""
+              ]
+            },
+            "description": "Verifies invalid or unavailable items are rejected."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Orders - Success",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.test('Orders returned', function () {",
+                  "    pm.expect(response.orders).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Session-Token",
+                "value": "{{session_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                ""
+              ]
+            },
+            "description": "Returns orders for the current session."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Order Detail - Success",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const response = pm.response.json();",
+                  "pm.test('Order token matches', function () {",
+                  "    pm.expect(response.order_id).to.eql(pm.collectionVariables.get('order_id'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Session-Token",
+                "value": "{{session_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}",
+                ""
+              ]
+            },
+            "description": "Returns details for a single order in the current session."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Order Detail - Missing Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Session-Token",
+                "value": "{{session_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/ord_missing_token/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "ord_missing_token",
+                ""
+              ]
+            },
+            "description": "Verifies missing or inaccessible orders return 404."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

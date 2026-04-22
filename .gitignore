@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+.pytest_cache/
+.mypy_cache/
+.coverage
+.DS_Store
+postgres_data/
+staticfiles/
+
+# Local and production secret env files
+.env
+.env.*
+!.env.example
+!*.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+!backend/.env.production.example

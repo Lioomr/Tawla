@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:17
+    container_name: tawlax-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tawlax}
+      POSTGRES_USER: ${POSTGRES_USER:-tawlax}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: tawlax-backend-prod
+    restart: unless-stopped
+    depends_on:
+      - db
+    env_file:
+      - backend/.env.production
+    environment:
+      APP_ENV: production
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_data_prod:

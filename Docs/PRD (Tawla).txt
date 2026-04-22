@@ -1,0 +1,236 @@
+# Product Requirements Document (PRD)
+
+## Product Name
+**Tawlax**
+
+---
+
+## 1. Objective
+
+Tawlax is a smart restaurant operating system designed to eliminate customer waiting time when placing orders by enabling direct ordering from the table using NFC or QR, while seamlessly connecting customers, kitchen staff, and waiters in real time.
+
+---
+
+## 2. Target Users
+
+### Primary Market:
+- Mid-sized restaurants
+
+### Secondary Markets:
+- Small cafes
+- Premium restaurants
+- Restaurant chains
+
+---
+
+## 3. Problem Statement
+
+Restaurants face operational inefficiencies due to:
+- Delays in taking customer orders during peak hours
+- Miscommunication between waiters and kitchen
+- Lost revenue due to slow service
+- Poor customer experience
+
+---
+
+## 4. Solution Overview
+
+Tawlax provides a hybrid digital ordering system where:
+- Customers scan a QR code or tap NFC at their table
+- Orders are placed instantly without waiting
+- Orders are sent simultaneously to kitchen and waiters
+- Restaurants manage menus, tables, and operations via a dashboard
+
+---
+
+## 5. Core Features (MVP Scope)
+
+---
+
+### Customer Interface (Web App)
+
+- NFC tap / QR scan entry
+- Automatic table identification
+- Dynamic menu:
+  - Categories (drinks, meals, desserts)
+  - Availability toggle
+  - Time-based menus
+- Add to cart
+- Add notes to items
+- Place order
+- Payment options:
+  - Cash (default)
+  - Online (optional)
+- Order status tracking
+
+---
+
+### Kitchen Display System (KDS)
+
+- Real-time incoming orders
+- Order states:
+  - New
+  - Preparing
+  - Ready
+- Preparation timer per order
+- Visual/sound alerts
+- Order details (items, notes, table number)
+
+---
+
+### Waiter Interface
+
+- Live notifications for new orders
+- Table status tracking:
+  - Empty
+  - Ordering
+  - Preparing
+  - Served
+- Edit or cancel orders
+- Add manual orders
+- Mark payment status (cash / paid)
+
+---
+
+### Admin Dashboard
+
+- Menu management:
+  - Add/edit/delete items
+  - Categories
+  - Availability toggle
+- Table management:
+  - QR/NFC mapping
+- Staff management (roles & permissions)
+- Basic analytics:
+  - Orders per day
+  - Popular items
+
+---
+
+## 6. Order Flow
+
+1. Customer scans QR or taps NFC
+2. System identifies table
+3. Customer browses menu
+4. Customer places order
+5. Order is sent simultaneously to:
+   - Kitchen (instant)
+   - Waiter (notification)
+6. Kitchen updates order status
+7. Customer sees real-time updates
+
+---
+
+## 7. Payment System
+
+Hybrid payment model:
+- Cash payment (primary)
+- Online payment (optional future integration)
+
+---
+
+## 8. System Architecture (High-Level)
+
+### Frontend:
+- Customer app: Next.js (web-based)
+- Dashboards: Next.js / React
+
+### Backend:
+- Django REST Framework
+- WebSockets (Django Channels)
+
+### Communication:
+- Real-time updates via WebSockets
+
+### Database:
+- PostgreSQL
+
+---
+
+## 9. Pricing Model
+
+Hybrid pricing strategy:
+- Monthly subscription (low-cost entry)
+- Small commission per order
+
+---
+
+## 10. MVP Scope (Strict)
+
+### Included:
+- QR/NFC ordering
+- Dynamic menu
+- Order creation flow
+- Kitchen display system
+- Waiter notifications
+- Admin menu dashboard
+- Cash payment
+
+### Excluded (Future Phases):
+- Loyalty programs
+- Mobile applications
+- Advanced analytics
+- POS integrations
+- AI recommendations
+
+---
+
+## 11. Future Enhancements
+
+- Loyalty & rewards system
+- Customer accounts & personalization
+- AI-based upselling
+- Inventory automation
+- Mobile apps (iOS / Android)
+- POS system integrations
+
+---
+
+## 12. Risks & Challenges
+
+- Resistance from restaurant staff
+- Training requirements
+- Internet reliability in restaurants
+- Low adoption of online payments
+
+---
+
+## 13. Success Metrics
+
+- Reduction in order waiting time
+- Increase in orders per table
+- Daily active restaurants
+- Customer satisfaction
+- Restaurant retention rate
+
+---
+
+## 14. Product Positioning
+
+Tawlax is not just a QR menu system.
+
+It is a:
+> **Restaurant Operating System (ROS)**
+
+Focused on:
+- Speed
+- Efficiency
+- Real-time operations
+
+---
+
+## 15. Brand Direction
+
+- Modern, fast, minimal UI
+- Mobile-first experience
+- Clean dashboard interfaces
+- Focus on usability and speed
+
+---
+
+## 16. MVP Goal
+
+Launch a working system in real restaurants that:
+- Eliminates ordering delays
+- Improves service speed
+- Provides measurable value to restaurant owners
