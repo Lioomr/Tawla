@@ -1,9 +1,13 @@
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+import os
+import tempfile
 from unittest.mock import patch
 
 from apps.core.models import AuditLog
@@ -152,9 +156,42 @@ class StaffAuthApiTests(APITestCase):
             self.assertEqual(second.data["error"]["message"], "rate limit exceeded")
 
 
+class RestaurantBrandingModelTests(APITestCase):
+    def test_restaurant_branding_fields_and_unique_slug_are_created(self):
+        first = Restaurant.objects.create(
+            name="Cafe Noir!",
+            tagline="Where every cup tells a story",
+            welcome_message="Welcome!",
+            primary_color="#FF0000",
+            secondary_color="#1A1A1A",
+        )
+        second = Restaurant.objects.create(name="Cafe Noir!")
+
+        self.assertEqual(first.slug, "cafe-noir")
+        self.assertEqual(second.slug, "cafe-noir-2")
+        self.assertFalse(first.logo)
+        self.assertFalse(first.banner_image)
+        self.assertEqual(first.primary_color, "#FF0000")
+        self.assertEqual(first.secondary_color, "#1A1A1A")
+
+        first.slug = "changed-slug"
+        first.save()
+        first.refresh_from_db()
+        self.assertEqual(first.slug, "cafe-noir")
+
+        custom = Restaurant.objects.create(name="Custom", slug="Unsafe Slug!")
+        self.assertEqual(custom.slug, "unsafe-slug")
+
+
 class AdminManagementApiTests(APITestCase):
     def setUp(self):
         cache.clear()
+        self.media_root = tempfile.TemporaryDirectory()
+        self.override_settings = override_settings(MEDIA_ROOT=self.media_root.name)
+        self.override_settings.enable()
+        self.addCleanup(self.media_root.cleanup)
+        self.addCleanup(self.override_settings.disable)
+
         self.restaurant = Restaurant.objects.create(name="Admin Restaurant")
         self.admin_user = User.objects.create_user(
             username="admin_auth",
@@ -260,6 +297,29 @@ class AdminManagementApiTests(APITestCase):
         )
         self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
 
+    def test_admin_can_create_cashier_staff_and_cashier_can_login(self):
+        create_response = self.client.post(
+            "/api/v1/admin/staff/",
+            {
+                "username": "cashier_created",
+                "password": "Password123!",
+                "name": "Cashier Created",
+                "role": "CASHIER",
+            },
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(create_response.data["role"], StaffRole.CASHIER)
+
+        login_response = self.client.post(
+            "/api/v1/staff/auth/login/",
+            {"username": "cashier_created", "password": "Password123!"},
+            format="json",
+        )
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(login_response.data["staff"]["role"], StaffRole.CASHIER)
+
     def test_admin_actions_are_logged_and_admin_can_read_audit_logs(self):
         create_response = self.client.post(
             "/api/v1/admin/tables/",
@@ -285,3 +345,241 @@ class AdminManagementApiTests(APITestCase):
         self.assertEqual(log_response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(log_response.data["audit_logs"]), 1)
         self.assertEqual(log_response.data["audit_logs"][0]["action"], "admin.table_created")
+
+    def test_admin_can_read_restaurant_branding(self):
+        self.restaurant.tagline = "Original tagline"
+        self.restaurant.welcome_message = "Original welcome"
+        self.restaurant.primary_color = "#112233"
+        self.restaurant.secondary_color = "#AABBCC"
+        self.restaurant.save()
+
+        response = self.client.get(
+            "/api/v1/admin/restaurant/branding/",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data,
+            {
+                "name": "Admin Restaurant",
+                "slug": "admin-restaurant",
+                "tagline": "Original tagline",
+                "welcome_message": "Original welcome",
+                "logo": None,
+                "banner_image": None,
+                "primary_color": "#112233",
+                "secondary_color": "#AABBCC",
+            },
+        )
+        self.assertNotIn("id", response.data)
+
+    def test_admin_can_update_allowed_branding_fields(self):
+        original_slug = self.restaurant.slug
+
+        response = self.client.patch(
+            "/api/v1/admin/restaurant/branding/",
+            {
+                "slug": "malicious-slug",
+                "name": "Malicious Name",
+                "tagline": "New tagline",
+                "welcome_message": "New welcome",
+                "primary_color": "#FF5733",
+                "secondary_color": "#101010",
+            },
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["name"], "Admin Restaurant")
+        self.assertEqual(response.data["slug"], original_slug)
+        self.assertEqual(response.data["tagline"], "New tagline")
+        self.assertEqual(response.data["welcome_message"], "New welcome")
+        self.assertEqual(response.data["primary_color"], "#FF5733")
+        self.assertEqual(response.data["secondary_color"], "#101010")
+
+        self.restaurant.refresh_from_db()
+        self.assertEqual(self.restaurant.name, "Admin Restaurant")
+        self.assertEqual(self.restaurant.slug, original_slug)
+        self.assertEqual(self.restaurant.tagline, "New tagline")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                restaurant=self.restaurant,
+                actor_staff=self.admin_staff,
+                action="admin.restaurant_branding_updated",
+                target_identifier=original_slug,
+            ).exists()
+        )
+
+    def test_non_admin_cannot_update_restaurant_branding(self):
+        response = self.client.patch(
+            "/api/v1/admin/restaurant/branding/",
+            {"tagline": "Not allowed"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_invalid_branding_color_values_are_rejected(self):
+        response = self.client.patch(
+            "/api/v1/admin/restaurant/branding/",
+            {"primary_color": "red"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        assert_error_payload(
+            self,
+            response,
+            code="invalid_color_format",
+            message="invalid color format",
+        )
+
+    def test_invalid_branding_image_uploads_are_rejected(self):
+        response = self.client.patch(
+            "/api/v1/admin/restaurant/branding/",
+            {
+                "logo": SimpleUploadedFile(
+                    "logo.txt",
+                    b"not an image",
+                    content_type="text/plain",
+                )
+            },
+            format="multipart",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        assert_error_payload(
+            self,
+            response,
+            code="image_upload_error",
+            message="image upload error",
+        )
+
+    def test_admin_can_remove_restaurant_logo_and_banner(self):
+        upload_response = self.client.patch(
+            "/api/v1/admin/restaurant/branding/",
+            {
+                "logo": SimpleUploadedFile(
+                    "logo.png",
+                    b"logo",
+                    content_type="image/png",
+                ),
+                "banner_image": SimpleUploadedFile(
+                    "banner.webp",
+                    b"banner",
+                    content_type="image/webp",
+                ),
+            },
+            format="multipart",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+        self.assertEqual(upload_response.status_code, status.HTTP_200_OK)
+        self.restaurant.refresh_from_db()
+        logo_path = self.restaurant.logo.path
+        banner_path = self.restaurant.banner_image.path
+        self.assertTrue(os.path.exists(logo_path))
+        self.assertTrue(os.path.exists(banner_path))
+
+        logo_response = self.client.delete(
+            "/api/v1/admin/restaurant/branding/logo/",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+        banner_response = self.client.delete(
+            "/api/v1/admin/restaurant/branding/banner/",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(logo_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(banner_response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(logo_response.data["logo"])
+        self.assertIsNone(banner_response.data["banner_image"])
+        self.restaurant.refresh_from_db()
+        self.assertFalse(self.restaurant.logo)
+        self.assertFalse(self.restaurant.banner_image)
+        self.assertFalse(os.path.exists(logo_path))
+        self.assertFalse(os.path.exists(banner_path))
+        self.assertTrue(
+            AuditLog.objects.filter(
+                restaurant=self.restaurant,
+                action="admin.restaurant_logo_removed",
+                target_identifier=self.restaurant.slug,
+            ).exists()
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(
+                restaurant=self.restaurant,
+                action="admin.restaurant_banner_image_removed",
+                target_identifier=self.restaurant.slug,
+            ).exists()
+        )
+
+    def test_repeated_restaurant_logo_removal_is_safe(self):
+        first_response = self.client.delete(
+            "/api/v1/admin/restaurant/branding/logo/",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+        second_response = self.client.delete(
+            "/api/v1/admin/restaurant/branding/logo/",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(second_response.data["logo"])
+
+    def test_non_admin_cannot_remove_restaurant_logo(self):
+        response = self.client.delete(
+            "/api/v1/admin/restaurant/branding/logo/",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_branding_updates_are_scoped_to_authenticated_admin_restaurant(self):
+        other_restaurant = Restaurant.objects.create(
+            name="Other Admin Restaurant",
+            tagline="Other tagline",
+            primary_color="#000000",
+        )
+        other_user = User.objects.create_user(
+            username="other_admin_auth",
+            password="Password123!",
+        )
+        Staff.objects.create(
+            user=other_user,
+            restaurant=other_restaurant,
+            name="Other Admin",
+            role=StaffRole.ADMIN,
+        )
+        other_token = self.client.post(
+            "/api/v1/staff/auth/login/",
+            {"username": "other_admin_auth", "password": "Password123!"},
+            format="json",
+        ).data["access"]
+
+        response = self.client.patch(
+            "/api/v1/admin/restaurant/branding/",
+            {"tagline": "Scoped tagline"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {other_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["name"], "Other Admin Restaurant")
+        self.assertEqual(response.data["tagline"], "Scoped tagline")
+
+        self.restaurant.refresh_from_db()
+        other_restaurant.refresh_from_db()
+        self.assertEqual(self.restaurant.tagline, "")
+        self.assertEqual(other_restaurant.tagline, "Scoped tagline")
+        self.assertFalse(
+            AuditLog.objects.filter(
+                restaurant=self.restaurant,
+                action="admin.restaurant_branding_updated",
+            ).exists()
+        )

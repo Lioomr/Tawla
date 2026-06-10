@@ -6,7 +6,7 @@ from apps.menu.models import Category, MenuItem
 class MenuItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = MenuItem
-        fields = ["id", "name", "price", "is_available"]
+        fields = ["id", "name", "price", "is_available", "image"]
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -14,8 +14,8 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ["id", "name", "items"]
+        fields = ["id", "name", "image", "items"]
 
     def get_items(self, obj):
         items = getattr(obj, "available_items", obj.items.filter(is_available=True))
-        return MenuItemSerializer(items, many=True).data
+        return MenuItemSerializer(items, many=True, context=self.context).data

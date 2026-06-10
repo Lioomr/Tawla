@@ -28,5 +28,8 @@ class SessionStartView(APIView):
             return error_response(code="table_not_found", message="table not found", status_code=status.HTTP_404_NOT_FOUND)
 
         session = create_table_session(table=table)
-        response_serializer = SessionStartResponseSerializer(session)
+        response_serializer = SessionStartResponseSerializer(
+            session,
+            context={"request": request},
+        )
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)

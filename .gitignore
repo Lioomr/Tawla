@@ -8,6 +8,7 @@ __pycache__/
 .DS_Store
 postgres_data/
 staticfiles/
+backend/media/
 
 # Local and production secret env files
 .env

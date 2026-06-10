@@ -1,11 +1,12 @@
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models.deletion import ProtectedError
-from rest_framework import status
+from rest_framework import parsers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from apps.core.file_storage import clear_file_field
 from apps.core.responses import error_response
 from apps.core.services import create_audit_log
 from apps.restaurants.admin_serializers import (
@@ -20,8 +21,112 @@ from apps.restaurants.admin_serializers import (
 )
 from apps.restaurants.models import Staff, Table
 from apps.restaurants.permissions import IsAdminStaff
+from apps.restaurants.serializers import RestaurantBrandingSerializer
 
 User = get_user_model()
+
+
+def _branding_snapshot(restaurant):
+    return {
+        "tagline": restaurant.tagline,
+        "welcome_message": restaurant.welcome_message,
+        "logo": restaurant.logo.name if restaurant.logo else None,
+        "banner_image": restaurant.banner_image.name if restaurant.banner_image else None,
+        "primary_color": restaurant.primary_color,
+        "secondary_color": restaurant.secondary_color,
+    }
+
+
+class AdminRestaurantBrandingView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminStaff]
+    parser_classes = [parsers.JSONParser, parsers.MultiPartParser, parsers.FormParser]
+
+    def get(self, request):
+        restaurant = request.user.staff_profile.restaurant
+        serializer = RestaurantBrandingSerializer(
+            restaurant,
+            context={"request": request},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        restaurant = request.user.staff_profile.restaurant
+        previous_state = _branding_snapshot(restaurant)
+        serializer = RestaurantBrandingSerializer(
+            restaurant,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        if not serializer.is_valid():
+            if {"primary_color", "secondary_color"} & set(serializer.errors):
+                return error_response(
+                    code="invalid_color_format",
+                    message="invalid color format",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            if {"logo", "banner_image"} & set(serializer.errors):
+                return error_response(
+                    code="image_upload_error",
+                    message="image upload error",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            return error_response(
+                code="invalid_request",
+                message="invalid request",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        restaurant = serializer.save()
+        current_state = _branding_snapshot(restaurant)
+        changed_fields = {
+            field: {
+                "from": previous_state[field],
+                "to": current_state[field],
+            }
+            for field in previous_state
+            if previous_state[field] != current_state[field]
+        }
+        create_audit_log(
+            restaurant=restaurant,
+            actor_staff=request.user.staff_profile,
+            action="admin.restaurant_branding_updated",
+            target_type="restaurant",
+            target_identifier=restaurant.slug,
+            metadata={"changed_fields": changed_fields},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminRestaurantBrandingImageView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminStaff]
+    image_field = None
+
+    def delete(self, request):
+        if self.image_field not in {"logo", "banner_image"}:
+            return error_response(
+                code="invalid_request",
+                message="invalid request",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        restaurant = request.user.staff_profile.restaurant
+        previous_image = clear_file_field(restaurant, self.image_field)
+        create_audit_log(
+            restaurant=restaurant,
+            actor_staff=request.user.staff_profile,
+            action=f"admin.restaurant_{self.image_field}_removed",
+            target_type="restaurant",
+            target_identifier=restaurant.slug,
+            metadata={"previous_image": previous_image},
+        )
+        serializer = RestaurantBrandingSerializer(
+            restaurant,
+            context={"request": request},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class AdminTableCollectionView(APIView):

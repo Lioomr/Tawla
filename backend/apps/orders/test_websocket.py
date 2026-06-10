@@ -50,11 +50,21 @@ class OrderWebsocketTests(TransactionTestCase):
             username="waiter_ws_user",
             role=StaffRole.WAITER,
         )
+        self.cashier_token = self._create_staff_access_token(
+            restaurant=restaurant,
+            username="cashier_ws_user",
+            role=StaffRole.CASHIER,
+        )
         other_restaurant = Restaurant.objects.create(name="Other Realtime Restaurant")
         self.other_kitchen_token = self._create_staff_access_token(
             restaurant=other_restaurant,
             username="other_kitchen_ws_user",
             role=StaffRole.KITCHEN,
+        )
+        self.other_cashier_token = self._create_staff_access_token(
+            restaurant=other_restaurant,
+            username="other_cashier_ws_user",
+            role=StaffRole.CASHIER,
         )
 
     def test_order_created_event_reaches_customer_kitchen_and_waiter_channels(self):
@@ -73,20 +83,29 @@ class OrderWebsocketTests(TransactionTestCase):
         )
         kitchen = WebsocketCommunicator(application, f"/ws/kitchen/?access_token={self.kitchen_token}")
         waiter = WebsocketCommunicator(application, f"/ws/waiter/?access_token={self.waiter_token}")
+        cashier = WebsocketCommunicator(application, f"/ws/cashier/?access_token={self.cashier_token}")
         other_kitchen = WebsocketCommunicator(
             application,
             f"/ws/kitchen/?access_token={self.other_kitchen_token}",
+        )
+        other_cashier = WebsocketCommunicator(
+            application,
+            f"/ws/cashier/?access_token={self.other_cashier_token}",
         )
 
         customer_connected, _ = await customer.connect()
         kitchen_connected, _ = await kitchen.connect()
         waiter_connected, _ = await waiter.connect()
+        cashier_connected, _ = await cashier.connect()
         other_kitchen_connected, _ = await other_kitchen.connect()
+        other_cashier_connected, _ = await other_cashier.connect()
 
         self.assertTrue(customer_connected)
         self.assertTrue(kitchen_connected)
         self.assertTrue(waiter_connected)
+        self.assertTrue(cashier_connected)
         self.assertTrue(other_kitchen_connected)
+        self.assertTrue(other_cashier_connected)
 
         await database_sync_to_async(create_order_for_session)(
             session=self.session,
@@ -96,6 +115,7 @@ class OrderWebsocketTests(TransactionTestCase):
         customer_event = await customer.receive_json_from()
         kitchen_event = await kitchen.receive_json_from()
         waiter_event = await waiter.receive_json_from()
+        cashier_event = await cashier.receive_json_from()
 
         self.assertEqual(customer_event["type"], "order_created")
         self.assertEqual(customer_event["status"], "NEW")
@@ -105,12 +125,17 @@ class OrderWebsocketTests(TransactionTestCase):
         self.assertEqual(kitchen_event["table"], "Table 9")
         self.assertEqual(waiter_event["type"], "order_created")
         self.assertEqual(waiter_event["table"], "Table 9")
+        self.assertEqual(cashier_event["type"], "order_created")
+        self.assertEqual(cashier_event["table"], "Table 9")
         self.assertTrue(await other_kitchen.receive_nothing())
+        self.assertTrue(await other_cashier.receive_nothing())
 
         await customer.disconnect()
         await kitchen.disconnect()
         await waiter.disconnect()
+        await cashier.disconnect()
         await other_kitchen.disconnect()
+        await other_cashier.disconnect()
 
     async def _assert_order_updated_event_flow(self):
         customer = WebsocketCommunicator(
@@ -119,14 +144,17 @@ class OrderWebsocketTests(TransactionTestCase):
         )
         kitchen = WebsocketCommunicator(application, f"/ws/kitchen/?access_token={self.kitchen_token}")
         waiter = WebsocketCommunicator(application, f"/ws/waiter/?access_token={self.waiter_token}")
+        cashier = WebsocketCommunicator(application, f"/ws/cashier/?access_token={self.cashier_token}")
 
         customer_connected, _ = await customer.connect()
         kitchen_connected, _ = await kitchen.connect()
         waiter_connected, _ = await waiter.connect()
+        cashier_connected, _ = await cashier.connect()
 
         self.assertTrue(customer_connected)
         self.assertTrue(kitchen_connected)
         self.assertTrue(waiter_connected)
+        self.assertTrue(cashier_connected)
 
         order = await database_sync_to_async(create_order_for_session)(
             session=self.session,
@@ -135,12 +163,14 @@ class OrderWebsocketTests(TransactionTestCase):
         await customer.receive_json_from()
         await kitchen.receive_json_from()
         await waiter.receive_json_from()
+        await cashier.receive_json_from()
 
         await database_sync_to_async(update_order_status)(order=order, new_status="PREPARING")
 
         customer_event = await customer.receive_json_from()
         kitchen_event = await kitchen.receive_json_from()
         waiter_event = await waiter.receive_json_from()
+        cashier_event = await cashier.receive_json_from()
 
         self.assertEqual(customer_event["type"], "order_updated")
         self.assertEqual(customer_event["status"], "PREPARING")
@@ -148,22 +178,29 @@ class OrderWebsocketTests(TransactionTestCase):
         self.assertEqual(kitchen_event["status"], "PREPARING")
         self.assertEqual(waiter_event["type"], "order_updated")
         self.assertEqual(waiter_event["status"], "PREPARING")
+        self.assertEqual(cashier_event["type"], "order_updated")
+        self.assertEqual(cashier_event["status"], "PREPARING")
 
         await customer.disconnect()
         await kitchen.disconnect()
         await waiter.disconnect()
+        await cashier.disconnect()
 
     async def _assert_staff_channels_require_access_token(self):
         kitchen = WebsocketCommunicator(application, "/ws/kitchen/")
         waiter = WebsocketCommunicator(application, "/ws/waiter/")
+        cashier = WebsocketCommunicator(application, "/ws/cashier/")
 
         kitchen_connected, kitchen_close_code = await kitchen.connect()
         waiter_connected, waiter_close_code = await waiter.connect()
+        cashier_connected, cashier_close_code = await cashier.connect()
 
         self.assertFalse(kitchen_connected)
         self.assertFalse(waiter_connected)
+        self.assertFalse(cashier_connected)
         self.assertEqual(kitchen_close_code, 4401)
         self.assertEqual(waiter_close_code, 4401)
+        self.assertEqual(cashier_close_code, 4401)
 
     def _create_staff_access_token(self, *, restaurant, username, role):
         user = User.objects.create_user(username=username, password="Password123!")

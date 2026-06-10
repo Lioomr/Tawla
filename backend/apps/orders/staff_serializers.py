@@ -1,7 +1,22 @@
 from rest_framework import serializers
 
-from apps.orders.models import Order, OrderStatus
+from apps.orders.models import Order, OrderStatus, Payment, PaymentStatus
 from apps.orders.serializers import OrderItemResponseSerializer
+
+
+class CashierTableStatus:
+    EMPTY = "EMPTY"
+    ORDERING = "ORDERING"
+    PREPARING = "PREPARING"
+    SERVED = "SERVED"
+
+
+CASHIER_TABLE_STATUS_BY_ORDER_STATUS = {
+    OrderStatus.NEW: CashierTableStatus.ORDERING,
+    OrderStatus.PREPARING: CashierTableStatus.PREPARING,
+    OrderStatus.READY: CashierTableStatus.SERVED,
+    OrderStatus.SERVED: CashierTableStatus.SERVED,
+}
 
 
 class KitchenOrderSummarySerializer(serializers.ModelSerializer):
@@ -43,3 +58,31 @@ class WaiterTableSummarySerializer(serializers.Serializer):
     latest_status = serializers.CharField(allow_null=True)
     payment_status = serializers.CharField(allow_null=True)
     orders = WaiterTableOrderSerializer(many=True)
+
+
+def get_cashier_payment_status(order):
+    try:
+        return order.payment.status
+    except Payment.DoesNotExist:
+        return PaymentStatus.PENDING
+
+
+class CashierTableSummarySerializer(serializers.Serializer):
+    table_name = serializers.CharField()
+    table_token = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=[
+            CashierTableStatus.EMPTY,
+            CashierTableStatus.ORDERING,
+            CashierTableStatus.PREPARING,
+            CashierTableStatus.SERVED,
+        ]
+    )
+    order_id = serializers.CharField(allow_null=True)
+    total_price = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
+    payment_status = serializers.CharField(allow_null=True)
+
+
+class CashierTableOrderDetailSerializer(CashierTableSummarySerializer):
+    order_status = serializers.CharField(allow_null=True)
+    items = OrderItemResponseSerializer(many=True)

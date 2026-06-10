@@ -1,7 +1,7 @@
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
-from apps.orders.consumers import kitchen_group, waiter_group, session_orders_group
+from apps.orders.consumers import cashier_group, kitchen_group, waiter_group, session_orders_group
 
 
 def broadcast_order_created(*, order):
@@ -33,6 +33,10 @@ def broadcast_order_created(*, order):
         waiter_group(order.restaurant_id),
         {"type": "order_created", "payload": staff_payload},
     )
+    async_to_sync(channel_layer.group_send)(
+        cashier_group(order.restaurant_id),
+        {"type": "order_created", "payload": staff_payload},
+    )
 
 
 def broadcast_order_updated(*, order):
@@ -56,5 +60,9 @@ def broadcast_order_updated(*, order):
     )
     async_to_sync(channel_layer.group_send)(
         waiter_group(order.restaurant_id),
+        {"type": "order_updated", "payload": payload},
+    )
+    async_to_sync(channel_layer.group_send)(
+        cashier_group(order.restaurant_id),
         {"type": "order_updated", "payload": payload},
     )

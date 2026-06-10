@@ -27,8 +27,11 @@ interface FetchOptions extends RequestInit {
 
 export async function fetchApi<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
   const { sessionToken, accessToken, ...customConfig } = options;
+  // For FormData bodies, let the browser set the multipart Content-Type (incl. boundary).
+  const isFormData =
+    typeof FormData !== 'undefined' && customConfig.body instanceof FormData;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(customConfig.headers as Record<string, string>),
   };
 
@@ -77,6 +80,7 @@ export async function fetchApi<T>(endpoint: string, options: FetchOptions = {}):
 export interface SessionStartResponse {
   session_token: string;
   expires_at: string;
+  restaurant: RestaurantBranding;
 }
 
 export async function startTableSession(tableToken: string): Promise<SessionStartResponse> {
@@ -86,6 +90,18 @@ export async function startTableSession(tableToken: string): Promise<SessionStar
   });
 }
 
+// Restaurant branding (returned by GET /menu/ and admin branding endpoint)
+export interface RestaurantBranding {
+  name: string;
+  slug: string;
+  tagline: string;
+  welcome_message: string;
+  logo: string | null;
+  banner_image: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+}
+
 // Menu API methods
 export interface MenuItem {
   id: number;
@@ -93,15 +109,18 @@ export interface MenuItem {
   description?: string;
   price: string;
   is_available: boolean;
+  image: string | null;
 }
 
 export interface MenuCategory {
   id: number;
   name: string;
+  image: string | null;
   items: MenuItem[];
 }
 
 export interface MenuResponse {
+  restaurant: RestaurantBranding;
   categories: MenuCategory[];
 }
 
@@ -159,7 +178,7 @@ export async function getOrder(sessionToken: string, orderId: string): Promise<O
 export interface StaffProfile {
   username: string;
   name: string;
-  role: 'KITCHEN' | 'WAITER' | 'ADMIN';
+  role: 'KITCHEN' | 'WAITER' | 'ADMIN' | 'CASHIER';
   restaurant_id: number;
 }
 
@@ -260,6 +279,40 @@ export async function recordPayment(accessToken: string, orderId: string, method
   });
 }
 
+// Cashier API methods
+export type CashierTableStatus = 'EMPTY' | 'ORDERING' | 'PREPARING' | 'SERVED';
+
+export interface CashierTableSummary {
+  table_name: string;
+  table_token: string;
+  status: CashierTableStatus;
+  order_id: string | null;
+  total_price: string | null;
+  payment_status: string | null;
+}
+
+export interface CashierTableOrderDetail extends CashierTableSummary {
+  order_status: string | null;
+  items: OrderDetailItem[];
+}
+
+export async function getCashierTables(accessToken: string): Promise<CashierTableSummary[]> {
+  return fetchApi<CashierTableSummary[]>('/cashier/tables/', {
+    method: 'GET',
+    accessToken,
+  });
+}
+
+export async function getCashierTableOrder(
+  accessToken: string,
+  tableToken: string,
+): Promise<CashierTableOrderDetail> {
+  return fetchApi<CashierTableOrderDetail>(`/cashier/tables/${tableToken}/order/`, {
+    method: 'GET',
+    accessToken,
+  });
+}
+
 // Staff Token Refresh
 export interface RefreshResponse {
   access: string;
@@ -280,6 +333,7 @@ export async function refreshStaffToken(refreshToken: string): Promise<RefreshRe
 export interface AdminCategory {
   id: number;
   name: string;
+  image: string | null;
   item_count: number;
   created_at: string;
 }
@@ -325,6 +379,7 @@ export interface AdminMenuItem {
   description: string;
   price: string;
   is_available: boolean;
+  image: string | null;
   created_at: string;
 }
 
@@ -366,6 +421,58 @@ export async function deleteAdminMenuItem(accessToken: string, menuItemId: numbe
     method: 'DELETE',
     accessToken,
     body: JSON.stringify({ menu_item_id: menuItemId }),
+  });
+}
+
+// Admin image uploads (multipart). Backend returns the updated record with the
+// new `image` URL. Errors surface as ApiError with code "image_upload_error".
+export async function uploadAdminCategoryImage(
+  accessToken: string,
+  categoryId: number,
+  file: File,
+): Promise<AdminCategory> {
+  const formData = new FormData();
+  formData.append('image', file);
+  return fetchApi<AdminCategory>(`/admin/categories/${categoryId}/image/`, {
+    method: 'POST',
+    accessToken,
+    body: formData,
+  });
+}
+
+export async function uploadAdminMenuItemImage(
+  accessToken: string,
+  menuItemId: number,
+  file: File,
+): Promise<AdminMenuItem> {
+  const formData = new FormData();
+  formData.append('image', file);
+  return fetchApi<AdminMenuItem>(`/admin/menu-items/${menuItemId}/image/`, {
+    method: 'POST',
+    accessToken,
+    body: formData,
+  });
+}
+
+// Admin image removals. Backend clears the file and returns the updated record
+// with the image field now null.
+export async function removeAdminCategoryImage(
+  accessToken: string,
+  categoryId: number,
+): Promise<AdminCategory> {
+  return fetchApi<AdminCategory>(`/admin/categories/${categoryId}/image/`, {
+    method: 'DELETE',
+    accessToken,
+  });
+}
+
+export async function removeAdminMenuItemImage(
+  accessToken: string,
+  menuItemId: number,
+): Promise<AdminMenuItem> {
+  return fetchApi<AdminMenuItem>(`/admin/menu-items/${menuItemId}/image/`, {
+    method: 'DELETE',
+    accessToken,
   });
 }
 
@@ -514,4 +621,56 @@ export interface AdminAuditLogsResponse {
 
 export async function getAdminAuditLogs(accessToken: string): Promise<AdminAuditLogsResponse> {
   return fetchApi<AdminAuditLogsResponse>('/admin/audit-logs/', { method: 'GET', accessToken });
+}
+
+// Admin Restaurant Branding
+export interface RestaurantBrandingUpdatePayload {
+  tagline?: string;
+  welcome_message?: string;
+  primary_color?: string | null;
+  secondary_color?: string | null;
+}
+
+export async function getRestaurantBranding(accessToken: string): Promise<RestaurantBranding> {
+  return fetchApi<RestaurantBranding>('/admin/restaurant/branding/', { method: 'GET', accessToken });
+}
+
+export async function updateRestaurantBranding(
+  accessToken: string,
+  payload: RestaurantBrandingUpdatePayload,
+): Promise<RestaurantBranding> {
+  return fetchApi<RestaurantBranding>('/admin/restaurant/branding/', {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify(payload),
+  });
+}
+
+// Multipart variant for logo/banner uploads (compatible with backend MultiPartParser).
+// Editable text/color fields can be appended to the same FormData.
+export async function updateRestaurantBrandingMedia(
+  accessToken: string,
+  formData: FormData,
+): Promise<RestaurantBranding> {
+  return fetchApi<RestaurantBranding>('/admin/restaurant/branding/', {
+    method: 'PATCH',
+    accessToken,
+    body: formData,
+  });
+}
+
+// Remove the restaurant logo / banner. Backend clears the file and returns the
+// updated branding with the field now null.
+export async function removeRestaurantLogo(accessToken: string): Promise<RestaurantBranding> {
+  return fetchApi<RestaurantBranding>('/admin/restaurant/branding/logo/', {
+    method: 'DELETE',
+    accessToken,
+  });
+}
+
+export async function removeRestaurantBanner(accessToken: string): Promise<RestaurantBranding> {
+  return fetchApi<RestaurantBranding>('/admin/restaurant/branding/banner/', {
+    method: 'DELETE',
+    accessToken,
+  });
 }

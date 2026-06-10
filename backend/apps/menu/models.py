@@ -11,9 +11,11 @@ class Category(TimeStampedModel):
         related_name="categories",
     )
     name = models.CharField(max_length=120)
+    image = models.FileField(upload_to="categories/", null=True, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
-        ordering = ["restaurant_id", "name"]
+        ordering = ["restaurant_id", "sort_order", "name"]
         constraints = [
             models.UniqueConstraint(
                 fields=["restaurant", "name"],
@@ -40,9 +42,11 @@ class MenuItem(TimeStampedModel):
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     is_available = models.BooleanField(default=True)
+    image = models.FileField(upload_to="menu-items/", null=True, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
-        ordering = ["restaurant_id", "category_id", "name"]
+        ordering = ["restaurant_id", "category_id", "sort_order", "name"]
         indexes = [
             models.Index(fields=["restaurant", "category"]),
         ]

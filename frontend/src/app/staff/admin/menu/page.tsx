@@ -10,35 +10,16 @@ import {
   ApiError,
   getAdminCategories, createAdminCategory, updateAdminCategory, deleteAdminCategory,
   getAdminMenuItems, createAdminMenuItem, updateAdminMenuItem, deleteAdminMenuItem,
+  uploadAdminCategoryImage, uploadAdminMenuItemImage,
+  removeAdminCategoryImage, removeAdminMenuItemImage,
   AdminCategory, AdminMenuItem, AdminMenuItemPayload,
 } from '@/lib/api';
+import { AdminImageUpload } from '@/components/admin/AdminImageUpload';
+import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 import { Loader2, Plus, Pencil, Trash2, X, Check, Package, FolderOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// ─── Confirmation Dialog ───
-function ConfirmDialog({ title, message, onConfirm, onCancel, isPending }: {
-  title: string; message: string; onConfirm: () => void; onCancel: () => void; isPending?: boolean;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/60 backdrop-blur-sm">
-      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full border border-stone-200">
-        <h3 className="text-lg font-black tracking-tight mb-2 text-stone-900">{title}</h3>
-        <p className="text-stone-500 font-medium text-sm mb-6">{message}</p>
-        <div className="flex gap-3">
-          <button onClick={onCancel} disabled={isPending}
-            className="flex-1 py-2.5 font-bold tracking-tight text-stone-500 hover:text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors text-sm">
-            Cancel
-          </button>
-          <button onClick={onConfirm} disabled={isPending}
-            className="flex-1 py-2.5 font-bold tracking-tight text-white bg-red-500 hover:bg-red-600 rounded-xl transition-colors flex items-center justify-center text-sm">
-            {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Delete'}
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
+type RemoveImageTarget = { kind: 'category' | 'item'; id: number; name: string };
 
 export default function AdminMenuPage() {
   const { accessToken } = useStaffStore();
@@ -111,6 +92,40 @@ export default function AdminMenuPage() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin'] }); setDeletingItem(null); setItemError(''); showToast('Menu item deleted'); },
     onError: (e: unknown) => setItemError(e instanceof ApiError ? e.message : 'Failed to delete item'),
   });
+
+  // ─── Image Upload Mutations ───
+  const catImageMut = useMutation({
+    mutationFn: ({ id, file }: { id: number; file: File }) => uploadAdminCategoryImage(token, id, file),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'categories'] }); showToast('Category image updated'); },
+    onError: (e: unknown) => showToast(e instanceof ApiError ? e.message : 'Failed to upload image', 'error'),
+  });
+
+  const itemImageMut = useMutation({
+    mutationFn: ({ id, file }: { id: number; file: File }) => uploadAdminMenuItemImage(token, id, file),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'menu-items'] }); showToast('Item image updated'); },
+    onError: (e: unknown) => showToast(e instanceof ApiError ? e.message : 'Failed to upload image', 'error'),
+  });
+
+  // ─── Image Removal ───
+  const [removeImageTarget, setRemoveImageTarget] = useState<RemoveImageTarget | null>(null);
+
+  const catImageRemoveMut = useMutation({
+    mutationFn: (id: number) => removeAdminCategoryImage(token, id),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'categories'] }); setRemoveImageTarget(null); showToast('Category image removed'); },
+    onError: (e: unknown) => showToast(e instanceof ApiError ? e.message : 'Failed to remove image', 'error'),
+  });
+
+  const itemImageRemoveMut = useMutation({
+    mutationFn: (id: number) => removeAdminMenuItemImage(token, id),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'menu-items'] }); setRemoveImageTarget(null); showToast('Item image removed'); },
+    onError: (e: unknown) => showToast(e instanceof ApiError ? e.message : 'Failed to remove image', 'error'),
+  });
+
+  const confirmRemoveImage = () => {
+    if (!removeImageTarget) return;
+    if (removeImageTarget.kind === 'category') catImageRemoveMut.mutate(removeImageTarget.id);
+    else itemImageRemoveMut.mutate(removeImageTarget.id);
+  };
 
   const resetItemForm = () => setItemForm({ name: '', category_id: 0, description: '', price: '', is_available: true });
 
@@ -225,9 +240,19 @@ export default function AdminMenuPage() {
                 </button>
 
                 {categories.map((cat) => (
-                  <div key={cat.id} className={`px-5 py-3 flex items-center justify-between group transition-colors ${
+                  <div key={cat.id} className={`px-5 py-3 flex items-center gap-3 group transition-colors ${
                     activeCategory === cat.id ? 'bg-stone-100' : 'hover:bg-stone-50'
                   }`}>
+                    <AdminImageUpload
+                      size={40}
+                      rounded="rounded-lg"
+                      currentImage={cat.image}
+                      alt={cat.name}
+                      isUploading={catImageMut.isPending && catImageMut.variables?.id === cat.id}
+                      onSelect={(file) => catImageMut.mutate({ id: cat.id, file })}
+                      onRemove={() => setRemoveImageTarget({ kind: 'category', id: cat.id, name: cat.name })}
+                      isRemoving={catImageRemoveMut.isPending && catImageRemoveMut.variables === cat.id}
+                    />
                     {editingCat?.id === cat.id ? (
                       <div className="flex-1 flex items-center gap-1.5">
                         <input
@@ -321,8 +346,22 @@ export default function AdminMenuPage() {
                         className="group hover:bg-stone-50/60 transition-colors"
                       >
                         <td className="px-5 py-3.5">
-                          <span className="font-bold tracking-tight text-stone-800 block">{item.name}</span>
-                          {item.description && <p className="text-xs text-stone-400 mt-0.5 line-clamp-1">{item.description}</p>}
+                          <div className="flex items-center gap-3">
+                            <AdminImageUpload
+                              size={44}
+                              rounded="rounded-lg"
+                              currentImage={item.image}
+                              alt={item.name}
+                              isUploading={itemImageMut.isPending && itemImageMut.variables?.id === item.id}
+                              onSelect={(file) => itemImageMut.mutate({ id: item.id, file })}
+                              onRemove={() => setRemoveImageTarget({ kind: 'item', id: item.id, name: item.name })}
+                              isRemoving={itemImageRemoveMut.isPending && itemImageRemoveMut.variables === item.id}
+                            />
+                            <div className="min-w-0">
+                              <span className="font-bold tracking-tight text-stone-800 block truncate">{item.name}</span>
+                              {item.description && <p className="text-xs text-stone-400 mt-0.5 line-clamp-1">{item.description}</p>}
+                            </div>
+                          </div>
                         </td>
                         <td className="px-5 py-3.5 hidden sm:table-cell">
                           <span className="text-xs font-bold bg-stone-100 text-stone-600 px-2 py-0.5 rounded-md">{item.category_name}</span>
@@ -376,6 +415,20 @@ export default function AdminMenuPage() {
             onConfirm={() => deleteItemMut.mutate(deletingItem.id)}
             onCancel={() => setDeletingItem(null)}
             isPending={deleteItemMut.isPending}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ─── Image Removal Confirm ─── */}
+      <AnimatePresence>
+        {removeImageTarget && (
+          <ConfirmDialog
+            title="Remove Image"
+            message={`Remove the image for "${removeImageTarget.name}"? This can't be undone, but you can upload a new one anytime.`}
+            confirmLabel="Remove"
+            onConfirm={confirmRemoveImage}
+            onCancel={() => setRemoveImageTarget(null)}
+            isPending={catImageRemoveMut.isPending || itemImageRemoveMut.isPending}
           />
         )}
       </AnimatePresence>

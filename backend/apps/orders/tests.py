@@ -558,6 +558,310 @@ class WaiterAndPaymentApiTests(APITestCase):
             self.assertEqual(second.data["error"]["message"], "rate limit exceeded")
 
 
+class CashierApiTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.restaurant = Restaurant.objects.create(name="Cashier Restaurant")
+        self.other_restaurant = Restaurant.objects.create(name="Other Cashier Restaurant")
+        self.category = Category.objects.create(restaurant=self.restaurant, name="Cashier Meals")
+        self.item = MenuItem.objects.create(
+            restaurant=self.restaurant,
+            category=self.category,
+            name="Cashier Pizza",
+            price=Decimal("55.00"),
+            is_available=True,
+        )
+        other_category = Category.objects.create(restaurant=self.other_restaurant, name="Other Meals")
+        self.other_item = MenuItem.objects.create(
+            restaurant=self.other_restaurant,
+            category=other_category,
+            name="Other Pizza",
+            price=Decimal("66.00"),
+            is_available=True,
+        )
+
+        self.empty_table = self.create_table("Empty Table", "cashier_empty_table")
+        self.session_only_table = self.create_table("Session Only Table", "cashier_session_table")
+        self.new_table = self.create_table("New Table", "cashier_new_table")
+        self.preparing_table = self.create_table("Preparing Table", "cashier_preparing_table")
+        self.ready_table = self.create_table("Ready Table", "cashier_ready_table")
+        self.paid_table = self.create_table("Paid Table", "cashier_paid_table")
+        self.other_table = Table.objects.create(
+            restaurant=self.other_restaurant,
+            name="Other Table",
+            public_token="other_cashier_table",
+        )
+
+        TableSession.objects.create(
+            table=self.session_only_table,
+            session_token="sess_cashier_only",
+            expires_at=timezone.now() + timedelta(hours=2),
+        )
+        self.new_order = self.create_order(
+            table=self.new_table,
+            session_token="sess_cashier_new",
+            status=OrderStatus.NEW,
+            total_price=Decimal("55.00"),
+        )
+        self.preparing_order = self.create_order(
+            table=self.preparing_table,
+            session_token="sess_cashier_preparing",
+            status=OrderStatus.PREPARING,
+            total_price=Decimal("110.00"),
+            quantity=2,
+        )
+        self.ready_order = self.create_order(
+            table=self.ready_table,
+            session_token="sess_cashier_ready",
+            status=OrderStatus.READY,
+            total_price=Decimal("55.00"),
+        )
+        self.paid_order = self.create_order(
+            table=self.paid_table,
+            session_token="sess_cashier_paid",
+            status=OrderStatus.SERVED,
+            total_price=Decimal("55.00"),
+            expires_at=timezone.now() - timedelta(hours=1),
+        )
+        Payment.objects.create(
+            order=self.paid_order,
+            method="CASH",
+            status=PaymentStatus.PAID,
+            amount=Decimal("55.00"),
+        )
+        self.other_order = self.create_order(
+            table=self.other_table,
+            item=self.other_item,
+            session_token="sess_other_cashier",
+            status=OrderStatus.READY,
+            total_price=Decimal("66.00"),
+        )
+
+        self.cashier_staff = self.create_staff(
+            username="cashier_user",
+            role=StaffRole.CASHIER,
+        )
+        self.admin_staff = self.create_staff(
+            username="cashier_admin_user",
+            role=StaffRole.ADMIN,
+        )
+        self.waiter_staff = self.create_staff(
+            username="cashier_waiter_user",
+            role=StaffRole.WAITER,
+        )
+        self.kitchen_staff = self.create_staff(
+            username="cashier_kitchen_user",
+            role=StaffRole.KITCHEN,
+        )
+
+        self.cashier_token = self.login("cashier_user")
+        self.admin_token = self.login("cashier_admin_user")
+        self.waiter_token = self.login("cashier_waiter_user")
+        self.kitchen_token = self.login("cashier_kitchen_user")
+
+    def create_table(self, name, public_token):
+        return Table.objects.create(
+            restaurant=self.restaurant,
+            name=name,
+            public_token=public_token,
+        )
+
+    def create_order(
+        self,
+        *,
+        table,
+        session_token,
+        status,
+        total_price,
+        item=None,
+        quantity=1,
+        expires_at=None,
+    ):
+        session = TableSession.objects.create(
+            table=table,
+            session_token=session_token,
+            expires_at=expires_at or timezone.now() + timedelta(hours=2),
+        )
+        order = Order.objects.create(
+            restaurant=table.restaurant,
+            table=table,
+            session=session,
+            status=status,
+            total_price=total_price,
+        )
+        OrderItem.objects.create(
+            order=order,
+            menu_item=item or self.item,
+            quantity=quantity,
+            price_at_time=(item or self.item).price,
+            notes="Cashier note",
+        )
+        return order
+
+    def create_staff(self, *, username, role):
+        user = User.objects.create_user(username=username, password="Password123!")
+        return Staff.objects.create(
+            user=user,
+            restaurant=self.restaurant,
+            name=username,
+            role=role,
+        )
+
+    def login(self, username):
+        return self.client.post(
+            "/api/v1/staff/auth/login/",
+            {"username": username, "password": "Password123!"},
+            format="json",
+        ).data["access"]
+
+    def test_cashier_and_admin_can_list_restaurant_tables(self):
+        response = self.client.get(
+            "/api/v1/cashier/tables/",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+        admin_response = self.client.get(
+            "/api/v1/cashier/tables/",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+        tables = {table["table_name"]: table for table in response.data}
+
+        self.assertEqual(set(tables), {
+            "Empty Table",
+            "Session Only Table",
+            "New Table",
+            "Preparing Table",
+            "Ready Table",
+            "Paid Table",
+        })
+        self.assertEqual(tables["Empty Table"]["status"], "EMPTY")
+        self.assertEqual(tables["Session Only Table"]["status"], "ORDERING")
+        self.assertEqual(tables["New Table"]["status"], "ORDERING")
+        self.assertEqual(tables["Preparing Table"]["status"], "PREPARING")
+        self.assertEqual(tables["Ready Table"]["status"], "SERVED")
+        self.assertEqual(tables["Paid Table"]["status"], "EMPTY")
+        self.assertEqual(tables["Ready Table"]["order_id"], self.ready_order.public_token)
+        self.assertEqual(tables["Ready Table"]["total_price"], "55.00")
+        self.assertEqual(tables["Ready Table"]["payment_status"], "PENDING")
+        self.assertNotIn("table_id", tables["Ready Table"])
+        self.assertNotIn("id", tables["Ready Table"])
+
+    def test_waiter_and_kitchen_cannot_access_cashier_tables(self):
+        waiter_response = self.client.get(
+            "/api/v1/cashier/tables/",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+        kitchen_response = self.client.get(
+            "/api/v1/cashier/tables/",
+            HTTP_AUTHORIZATION=f"Bearer {self.kitchen_token}",
+        )
+
+        self.assertEqual(waiter_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(kitchen_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cashier_table_order_detail_is_restaurant_scoped_and_public_only(self):
+        response = self.client.get(
+            f"/api/v1/cashier/tables/{self.ready_table.public_token}/order/",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+        other_response = self.client.get(
+            f"/api/v1/cashier/tables/{self.other_table.public_token}/order/",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["table_token"], self.ready_table.public_token)
+        self.assertEqual(response.data["order_id"], self.ready_order.public_token)
+        self.assertEqual(response.data["order_status"], OrderStatus.READY)
+        self.assertEqual(response.data["items"][0]["name"], "Cashier Pizza")
+        self.assertNotIn("table_id", response.data)
+        self.assertNotIn("id", response.data)
+        self.assertEqual(other_response.status_code, status.HTTP_404_NOT_FOUND)
+        assert_error_payload(self, other_response, code="table_not_found", message="table not found")
+
+    def test_cashier_cannot_update_order_status_or_modify_admin_resources(self):
+        kitchen_response = self.client.patch(
+            f"/api/v1/kitchen/orders/{self.new_order.public_token}/status/",
+            {"status": "PREPARING"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+        waiter_response = self.client.patch(
+            f"/api/v1/waiter/orders/{self.ready_order.public_token}/serve/",
+            {},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+        table_response = self.client.post(
+            "/api/v1/admin/tables/",
+            {"name": "Cashier Created Table"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+        staff_response = self.client.post(
+            "/api/v1/admin/staff/",
+            {
+                "username": "cashier_created_staff",
+                "password": "Password123!",
+                "name": "Cashier Created Staff",
+                "role": "WAITER",
+            },
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+        menu_response = self.client.post(
+            "/api/v1/admin/menu-items/",
+            {
+                "category_id": self.category.id,
+                "name": "Cashier Burger",
+                "price": "44.00",
+                "is_available": True,
+            },
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+
+        self.assertEqual(kitchen_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(waiter_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(table_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(staff_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(menu_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cashier_can_record_cash_payment_for_restaurant_order(self):
+        response = self.client.post(
+            "/api/v1/payments/",
+            {"order_id": self.ready_order.public_token, "method": "CASH"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["order_id"], self.ready_order.public_token)
+        self.assertEqual(response.data["status"], PaymentStatus.PAID)
+        payment = Payment.objects.get(order=self.ready_order)
+        self.assertEqual(payment.amount, Decimal("55.00"))
+        audit_log = AuditLog.objects.get(
+            restaurant=self.restaurant,
+            actor_staff=self.cashier_staff,
+            action="payment.recorded",
+            target_identifier=self.ready_order.public_token,
+        )
+        self.assertEqual(audit_log.metadata["actor_type"], StaffRole.CASHIER)
+
+    def test_cashier_payment_is_restaurant_scoped(self):
+        response = self.client.post(
+            "/api/v1/payments/",
+            {"order_id": self.other_order.public_token, "method": "CASH"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.cashier_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        assert_error_payload(self, response, code="order_not_found", message="order not found")
+
+
 class AdminOrderDashboardApiTests(APITestCase):
     def setUp(self):
         cache.clear()

@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from apps.core.responses import error_response
 from apps.menu.serializers import CategorySerializer
 from apps.menu.services import get_menu_categories_for_restaurant
+from apps.restaurants.serializers import RestaurantBrandingSerializer
 from apps.sessions.exceptions import ExpiredSessionError, InvalidSessionError
 from apps.sessions.services import get_valid_session_from_headers
 
@@ -22,8 +23,23 @@ class MenuListView(APIView):
             return error_response(code="expired_session", message="expired session", status_code=status.HTTP_403_FORBIDDEN)
 
         request.session_context = session
+        restaurant = session.table.restaurant
         categories = get_menu_categories_for_restaurant(
-            restaurant=session.table.restaurant
+            restaurant=restaurant
         )
-        serializer = CategorySerializer(categories, many=True)
-        return Response({"categories": serializer.data}, status=status.HTTP_200_OK)
+        restaurant_serializer = RestaurantBrandingSerializer(
+            restaurant,
+            context={"request": request},
+        )
+        category_serializer = CategorySerializer(
+            categories,
+            many=True,
+            context={"request": request},
+        )
+        return Response(
+            {
+                "restaurant": restaurant_serializer.data,
+                "categories": category_serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )

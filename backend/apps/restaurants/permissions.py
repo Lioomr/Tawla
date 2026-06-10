@@ -36,6 +36,18 @@ class IsWaiterOrAdmin(BasePermission):
         return request.user.staff_profile.role in {StaffRole.WAITER, StaffRole.ADMIN}
 
 
+class IsCashierOrAdmin(BasePermission):
+    def has_permission(self, request, view):
+        if not (
+            request.user
+            and request.user.is_authenticated
+            and hasattr(request.user, "staff_profile")
+        ):
+            return False
+
+        return request.user.staff_profile.role in {StaffRole.CASHIER, StaffRole.ADMIN}
+
+
 class IsAdminStaff(BasePermission):
     def has_permission(self, request, view):
         if not (

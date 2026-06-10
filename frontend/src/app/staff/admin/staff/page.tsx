@@ -13,11 +13,12 @@ import {
 import { Loader2, Plus, Pencil, Trash2, Users, X, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const ROLE_OPTIONS = ['KITCHEN', 'WAITER', 'ADMIN'];
+const ROLE_OPTIONS = ['KITCHEN', 'WAITER', 'CASHIER', 'ADMIN'];
 const ROLE_STYLE: Record<string, { bg: string; text: string; border: string; icon: string }> = {
   ADMIN: { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-l-purple-500', icon: '👑' },
   KITCHEN: { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-l-amber-500', icon: '🍳' },
   WAITER: { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-l-blue-500', icon: '🍽️' },
+  CASHIER: { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-l-emerald-500', icon: '💵' },
 };
 
 function StaffInitials({ name }: { name: string }) {

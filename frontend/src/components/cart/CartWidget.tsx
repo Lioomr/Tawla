@@ -1,4 +1,6 @@
 import { useCartStore } from "@/store/useCartStore";
+import { useLanguage } from "@/lib/i18n";
+import { formatPrice } from "@/lib/format";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface CartWidgetProps {
@@ -8,6 +10,7 @@ interface CartWidgetProps {
 export function CartWidget({ onOpenCart }: CartWidgetProps) {
   const totalItems = useCartStore((state) => state.getTotalItems());
   const subtotal = useCartStore((state) => state.getSubtotal());
+  const { t } = useLanguage();
 
   return (
     <AnimatePresence>
@@ -20,16 +23,17 @@ export function CartWidget({ onOpenCart }: CartWidgetProps) {
         >
           <button
             onClick={onOpenCart}
-            className="w-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-full py-4 px-6 shadow-xl flex items-center justify-between active:scale-95 transition-transform"
+            style={{ backgroundColor: "var(--brand-primary)", color: "var(--brand-on-primary)" }}
+            className="w-full rounded-full py-4 px-6 shadow-xl flex items-center justify-between active:scale-95 transition-transform"
           >
             <div className="flex items-center gap-3">
-              <div className="bg-white/20 dark:bg-black/10 w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold">
+              <div className="bg-white/20 w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold">
                 {totalItems}
               </div>
-              <span className="font-semibold text-lg tracking-tight">View Cart</span>
+              <span className="font-semibold text-lg tracking-tight">{t("viewCart")}</span>
             </div>
             <div className="font-bold text-lg">
-              ${subtotal.toFixed(2)}
+              {formatPrice(subtotal)}
             </div>
           </button>
         </motion.div>

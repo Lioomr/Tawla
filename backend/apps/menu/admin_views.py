@@ -1,10 +1,11 @@
 from django.db.models.deletion import ProtectedError
 from django.db.models import Count
-from rest_framework import status
+from rest_framework import parsers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from apps.core.file_storage import clear_file_field
 from apps.core.responses import error_response
 from apps.core.services import create_audit_log
 from apps.menu.admin_serializers import (
@@ -14,6 +15,7 @@ from apps.menu.admin_serializers import (
     AdminMenuItemDeleteSerializer,
     AdminMenuItemSerializer,
     AdminMenuItemWriteSerializer,
+    ImageUploadSerializer,
 )
 from apps.menu.models import Category, MenuItem
 from apps.restaurants.permissions import IsAdminStaff
@@ -28,7 +30,11 @@ class AdminCategoryCollectionView(APIView):
         categories = Category.objects.filter(restaurant=restaurant).annotate(
             item_count=Count("items")
         )
-        serializer = AdminCategorySerializer(categories, many=True)
+        serializer = AdminCategorySerializer(
+            categories,
+            many=True,
+            context={"request": request},
+        )
         return Response({"categories": serializer.data}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -52,7 +58,10 @@ class AdminCategoryCollectionView(APIView):
             target_identifier=category.id,
             metadata={"name": category.name},
         )
-        response_serializer = AdminCategorySerializer(category)
+        response_serializer = AdminCategorySerializer(
+            category,
+            context={"request": request},
+        )
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
     def patch(self, request):
@@ -80,7 +89,10 @@ class AdminCategoryCollectionView(APIView):
             target_identifier=category.id,
             metadata={"from_name": previous_name, "to_name": category.name},
         )
-        response_serializer = AdminCategorySerializer(category)
+        response_serializer = AdminCategorySerializer(
+            category,
+            context={"request": request},
+        )
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
     def delete(self, request):
@@ -123,7 +135,11 @@ class AdminMenuItemCollectionView(APIView):
             .select_related("category")
             .order_by("category__name", "name")
         )
-        serializer = AdminMenuItemSerializer(items, many=True)
+        serializer = AdminMenuItemSerializer(
+            items,
+            many=True,
+            context={"request": request},
+        )
         return Response({"items": serializer.data}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -161,7 +177,10 @@ class AdminMenuItemCollectionView(APIView):
                 "is_available": item.is_available,
             },
         )
-        response_serializer = AdminMenuItemSerializer(item)
+        response_serializer = AdminMenuItemSerializer(
+            item,
+            context={"request": request},
+        )
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
     def patch(self, request):
@@ -214,7 +233,10 @@ class AdminMenuItemCollectionView(APIView):
                 },
             },
         )
-        response_serializer = AdminMenuItemSerializer(item)
+        response_serializer = AdminMenuItemSerializer(
+            item,
+            context={"request": request},
+        )
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
     def delete(self, request):
@@ -244,3 +266,143 @@ class AdminMenuItemCollectionView(APIView):
             metadata={},
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminCategoryImageUploadView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminStaff]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    def post(self, request, category_id):
+        serializer = ImageUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                code="image_upload_error",
+                message="image upload error",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        restaurant = request.user.staff_profile.restaurant
+        try:
+            category = Category.objects.get(id=category_id, restaurant=restaurant)
+        except Category.DoesNotExist:
+            return error_response(
+                code="category_not_found",
+                message="category not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        category.image = serializer.validated_data["image"]
+        category.save(update_fields=["image", "updated_at"])
+        create_audit_log(
+            restaurant=restaurant,
+            actor_staff=request.user.staff_profile,
+            action="admin.category_image_updated",
+            target_type="category",
+            target_identifier=category.id,
+            metadata={"image": category.image.name},
+        )
+        response_serializer = AdminCategorySerializer(
+            category,
+            context={"request": request},
+        )
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    def delete(self, request, category_id):
+        restaurant = request.user.staff_profile.restaurant
+        try:
+            category = Category.objects.get(id=category_id, restaurant=restaurant)
+        except Category.DoesNotExist:
+            return error_response(
+                code="category_not_found",
+                message="category not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        previous_image = clear_file_field(category, "image")
+        create_audit_log(
+            restaurant=restaurant,
+            actor_staff=request.user.staff_profile,
+            action="admin.category_image_removed",
+            target_type="category",
+            target_identifier=category.id,
+            metadata={"previous_image": previous_image},
+        )
+        response_serializer = AdminCategorySerializer(
+            category,
+            context={"request": request},
+        )
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminMenuItemImageUploadView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminStaff]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    def post(self, request, menu_item_id):
+        serializer = ImageUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                code="image_upload_error",
+                message="image upload error",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        restaurant = request.user.staff_profile.restaurant
+        try:
+            item = MenuItem.objects.select_related("category").get(
+                id=menu_item_id,
+                restaurant=restaurant,
+            )
+        except MenuItem.DoesNotExist:
+            return error_response(
+                code="menu_item_not_found",
+                message="menu item not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        item.image = serializer.validated_data["image"]
+        item.save(update_fields=["image", "updated_at"])
+        create_audit_log(
+            restaurant=restaurant,
+            actor_staff=request.user.staff_profile,
+            action="admin.menu_item_image_updated",
+            target_type="menu_item",
+            target_identifier=item.id,
+            metadata={"image": item.image.name},
+        )
+        response_serializer = AdminMenuItemSerializer(
+            item,
+            context={"request": request},
+        )
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    def delete(self, request, menu_item_id):
+        restaurant = request.user.staff_profile.restaurant
+        try:
+            item = MenuItem.objects.select_related("category").get(
+                id=menu_item_id,
+                restaurant=restaurant,
+            )
+        except MenuItem.DoesNotExist:
+            return error_response(
+                code="menu_item_not_found",
+                message="menu item not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        previous_image = clear_file_field(item, "image")
+        create_audit_log(
+            restaurant=restaurant,
+            actor_staff=request.user.staff_profile,
+            action="admin.menu_item_image_removed",
+            target_type="menu_item",
+            target_identifier=item.id,
+            metadata={"previous_image": previous_image},
+        )
+        response_serializer = AdminMenuItemSerializer(
+            item,
+            context={"request": request},
+        )
+        return Response(response_serializer.data, status=status.HTTP_200_OK)

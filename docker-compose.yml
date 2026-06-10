@@ -29,6 +29,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./El baraka picture:/app/demo_assets/el_baraka:ro
 
   frontend:
     build:
@@ -39,7 +40,8 @@ services:
     depends_on:
       - backend
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+      - NEXT_PUBLIC_API_URL=http://192.168.1.12:8000/api/v1
+
     ports:
       - "3000:3000"
     volumes:

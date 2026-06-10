@@ -6,7 +6,7 @@ import { useStaffStore } from '@/store/useStaffStore';
 import { AdminToastProvider } from '@/components/admin/AdminToast';
 import {
   LayoutDashboard, UtensilsCrossed, Grid3X3, Users,
-  ClipboardList, BarChart3, Shield, LogOut, Menu, X, ChevronRight,
+  ClipboardList, BarChart3, Shield, LogOut, Menu, X, ChevronRight, Palette,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: '/staff/admin/staff', label: 'Staff', icon: Users },
   { href: '/staff/admin/orders', label: 'Orders', icon: ClipboardList },
   { href: '/staff/admin/analytics', label: 'Analytics', icon: BarChart3 },
+  { href: '/staff/admin/branding', label: 'Branding', icon: Palette },
   { href: '/staff/admin/audit-log', label: 'Audit Log', icon: Shield },
 ];
 

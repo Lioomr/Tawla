@@ -2,6 +2,12 @@
 
 import { useMenu } from "@/hooks/useMenu";
 import { useCustomerStore } from "@/store/useCustomerStore";
+import { useBrandingStore } from "@/store/useBrandingStore";
+import { useBrandTheme } from "@/hooks/useBrandTheme";
+import { brandName, DEFAULT_BRAND, getTextDir } from "@/lib/branding";
+import { useLanguage } from "@/lib/i18n";
+import { BrandMark } from "@/components/branding/BrandMark";
+import { LanguageToggle } from "@/components/menu/LanguageToggle";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { CategoryNav } from "@/components/menu/CategoryNav";
@@ -14,6 +20,8 @@ import { motion, AnimatePresence } from "framer-motion";
 export default function MenuPage() {
   const router = useRouter();
   const { isValid } = useCustomerStore();
+  const { t, dir } = useLanguage();
+  const setBranding = useBrandingStore((s) => s.setBranding);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const mounted = useSyncExternalStore(
     () => () => {},
@@ -29,47 +37,91 @@ export default function MenuPage() {
 
   const { data: menuData, isLoading, error, refetch } = useMenu();
 
+  // Persist branding so the theme survives navigation/reload, then apply it.
+  useEffect(() => {
+    if (menuData?.restaurant) {
+      setBranding(menuData.restaurant);
+    }
+  }, [menuData?.restaurant, setBranding]);
+  useBrandTheme();
+
   if (!mounted) return null;
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center p-4">
-        <Loader2 className="w-8 h-8 animate-spin text-zinc-400 mb-4" />
-        <p className="text-zinc-500 font-medium animate-pulse">Loading menu...</p>
+      <div dir={dir} className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center p-4">
+        <Loader2 className="w-8 h-8 animate-spin mb-4" style={{ color: "var(--brand-accent)" }} />
+        <p className="text-zinc-500 font-medium animate-pulse">{t("loadingMenu")}</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center p-4 text-center">
+      <div dir={dir} className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center p-4 text-center">
         <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mb-4 text-2xl font-bold">
           !
         </div>
-        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Failed to load menu</h2>
+        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">{t("failedToLoad")}</h2>
         <p className="text-zinc-500 max-w-sm mb-6">{error.message}</p>
-        <button 
-          onClick={() => refetch()} 
-          className="px-6 py-2 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-full font-semibold tracking-tight active:scale-95 transition-all"
+        <button
+          onClick={() => refetch()}
+          style={{ backgroundColor: "var(--brand-primary)", color: "var(--brand-on-primary)" }}
+          className="px-6 py-2 rounded-full font-semibold tracking-tight active:scale-95 transition-all"
         >
-          Try Again
+          {t("tryAgain")}
         </button>
       </div>
     );
   }
 
   const categories = menuData?.categories || [];
+  const restaurant = menuData?.restaurant;
+  const displayName = brandName(restaurant);
+  const subtitle =
+    restaurant?.welcome_message?.trim() ||
+    restaurant?.tagline?.trim() ||
+    DEFAULT_BRAND.tagline;
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 pb-32">
-      {/* Header Placeholder - branding */}
-      <header className="pt-12 pb-6 px-4 bg-zinc-50 dark:bg-zinc-950">
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 pb-32" dir={dir}>
+      {/* Banner */}
+      {restaurant?.banner_image && (
+        <div className="w-full max-w-md mx-auto">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={restaurant.banner_image}
+            alt={`${displayName} banner`}
+            className="w-full h-40 object-cover"
+            loading="eager"
+          />
+        </div>
+      )}
+
+      {/* Restaurant branding header */}
+      <header
+        className={`px-4 bg-zinc-50 dark:bg-zinc-950 ${restaurant?.banner_image ? "pt-5 pb-6" : "pt-12 pb-6"}`}
+      >
         <div className="max-w-md mx-auto">
-          <h1 className="text-4xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Tawlax.
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400 mt-2 font-medium">
-            Order seamlessly. Relax instantly.
+          <div className="flex items-start justify-between gap-3">
+            {restaurant?.logo ? (
+              <BrandMark branding={restaurant} size={48} />
+            ) : (
+              <h1
+                className="text-4xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50 min-w-0 break-words"
+                dir={getTextDir(displayName)}
+              >
+                {displayName}
+              </h1>
+            )}
+            <LanguageToggle className="mt-1" />
+          </div>
+          <p
+            className="mt-2 font-bold text-lg text-start"
+            style={{ color: "var(--brand-accent)" }}
+            dir={getTextDir(subtitle)}
+          >
+            {subtitle}
           </p>
         </div>
       </header>
@@ -94,7 +146,7 @@ export default function MenuPage() {
 
         {categories.length === 0 && (
           <div className="p-8 text-center text-zinc-500 dark:text-zinc-400">
-            No items available right now.
+            {t("noItems")}
           </div>
         )}
       </main>

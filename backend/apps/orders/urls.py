@@ -3,6 +3,8 @@ from django.urls import path
 from apps.orders.staff_views import (
     AdminAnalyticsSummaryView,
     AdminOrderListView,
+    CashierTableListView,
+    CashierTableOrderDetailView,
     KitchenOrderListView,
     KitchenOrderStatusUpdateView,
     PaymentCreateView,
@@ -26,6 +28,12 @@ urlpatterns = [
         "waiter/orders/<str:order_token>/serve/",
         WaiterOrderServeView.as_view(),
         name="waiter-order-serve",
+    ),
+    path("cashier/tables/", CashierTableListView.as_view(), name="cashier-table-list"),
+    path(
+        "cashier/tables/<str:table_token>/order/",
+        CashierTableOrderDetailView.as_view(),
+        name="cashier-table-order-detail",
     ),
     path("payments/", PaymentCreateView.as_view(), name="payment-create"),
     path("admin/orders/", AdminOrderListView.as_view(), name="admin-order-list"),

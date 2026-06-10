@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.core.upload_validators import validate_uploaded_image
 from apps.menu.models import Category, MenuItem
 
 
@@ -8,7 +9,7 @@ class AdminCategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ["id", "name", "item_count", "created_at"]
+        fields = ["id", "name", "image", "item_count", "created_at"]
 
     def get_item_count(self, obj):
         annotated_count = getattr(obj, "item_count", None)
@@ -40,6 +41,7 @@ class AdminMenuItemSerializer(serializers.ModelSerializer):
             "description",
             "price",
             "is_available",
+            "image",
             "created_at",
         ]
 
@@ -55,3 +57,10 @@ class AdminMenuItemWriteSerializer(serializers.Serializer):
 
 class AdminMenuItemDeleteSerializer(serializers.Serializer):
     menu_item_id = serializers.IntegerField(min_value=1)
+
+
+class ImageUploadSerializer(serializers.Serializer):
+    image = serializers.FileField()
+
+    def validate_image(self, value):
+        return validate_uploaded_image(value)

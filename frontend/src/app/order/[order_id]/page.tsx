@@ -7,12 +7,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, CheckCircle2, ChefHat, Utensils, ArrowLeft } from 'lucide-react';
 import { useEffect } from 'react';
 import { useCustomerStore } from '@/store/useCustomerStore';
+import { useBrandTheme, useHydratedBranding } from '@/hooks/useBrandTheme';
+import { brandName, getTextDir } from '@/lib/branding';
+import { useLanguage } from '@/lib/i18n';
+import { formatPrice } from '@/lib/format';
+import type { TranslationKey } from '@/lib/i18n';
 
-const STATUS_STEPS = [
-  { id: 'NEW', title: 'Order Placed', icon: CheckCircle2, description: 'Sent to the kitchen' },
-  { id: 'PREPARING', title: 'Preparing', icon: ChefHat, description: 'Being made fresh' },
-  { id: 'READY', title: 'Ready', icon: Utensils, description: 'Waiting for waiter' },
-  { id: 'SERVED', title: 'Served', icon: CheckCircle2, description: 'Enjoy your meal!' },
+const STATUS_STEPS: { id: string; icon: typeof CheckCircle2; titleKey: TranslationKey; descKey: TranslationKey }[] = [
+  { id: 'NEW', icon: CheckCircle2, titleKey: 'statusNew', descKey: 'statusNewDesc' },
+  { id: 'PREPARING', icon: ChefHat, titleKey: 'statusPreparing', descKey: 'statusPreparingDesc' },
+  { id: 'READY', icon: Utensils, titleKey: 'statusReady', descKey: 'statusReadyDesc' },
+  { id: 'SERVED', icon: CheckCircle2, titleKey: 'statusServed', descKey: 'statusServedDesc' },
 ];
 
 export default function OrderStatusPage() {
@@ -21,6 +26,11 @@ export default function OrderStatusPage() {
   const orderId = params.order_id as string | undefined;
 
   const { isValid } = useCustomerStore();
+  const branding = useHydratedBranding();
+  const { t, dir } = useLanguage();
+
+  // Apply persisted restaurant branding for visual continuity from the menu.
+  useBrandTheme();
 
   // Validate session presence to prevent unauthenticated access
   useEffect(() => {
@@ -37,10 +47,10 @@ export default function OrderStatusPage() {
 
   if (isLoading || !orderId) {
     return (
-      <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
+      <div dir={dir} className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
         <div className="flex flex-col items-center space-y-4">
-          <Loader2 className="h-8 w-8 animate-spin text-zinc-900" />
-          <p className="text-zinc-500 font-medium tracking-tight">Locating order...</p>
+          <Loader2 className="h-8 w-8 animate-spin" style={{ color: 'var(--brand-primary)' }} />
+          <p className="text-zinc-500 font-medium tracking-tight">{t('locatingOrder')}</p>
         </div>
       </div>
     );
@@ -48,36 +58,46 @@ export default function OrderStatusPage() {
 
   if (isError || !order) {
     return (
-      <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-4">
-        <h2 className="text-xl font-bold mb-2">Order Not Found</h2>
-        <p className="text-zinc-500 mb-6 font-medium text-center">We couldn&apos;t track down this order. It may have expired or is invalid.</p>
-        <button 
+      <div dir={dir} className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-4 text-center">
+        <h2 className="text-xl font-bold mb-2">{t('orderNotFound')}</h2>
+        <p className="text-zinc-500 mb-6 font-medium text-center">{t('orderNotFoundBody')}</p>
+        <button
           onClick={() => router.push('/menu')}
-          className="px-6 py-3 bg-zinc-900 text-white rounded-xl font-medium tracking-tight"
+          style={{ backgroundColor: 'var(--brand-primary)', color: 'var(--brand-on-primary)' }}
+          className="px-6 py-3 rounded-xl font-medium tracking-tight"
         >
-          Return to Menu
+          {t('returnToMenu')}
         </button>
       </div>
     );
   }
 
   const currentStatusIndex = STATUS_STEPS.findIndex(s => s.id === order.status) || 0;
+  const safeIndex = currentStatusIndex >= 0 ? currentStatusIndex : 0;
+  const currentStep = STATUS_STEPS[safeIndex];
 
   return (
-    <div className="min-h-screen bg-zinc-50 pb-24">
+    <div dir={dir} className="min-h-screen bg-zinc-50 pb-24">
       {/* Header */}
       <header className="sticky top-0 z-10 font-bold bg-white/80 backdrop-blur-md border-b border-zinc-100 px-4 py-4 flex items-center pb-safe">
-        <button 
+        <button
           onClick={() => router.push('/menu')}
-          className="p-2 -ml-2 rounded-full active:bg-zinc-100 transition-colors"
+          aria-label={t('returnToMenu')}
+          className="p-2 -ms-2 rounded-full active:bg-zinc-100 transition-colors"
         >
-          <ArrowLeft className="w-5 h-5 text-zinc-900" />
+          <ArrowLeft className="w-5 h-5 text-zinc-900 rtl:rotate-180" />
         </button>
-        <span className="text-lg font-bold tracking-tight ml-2">Order Status</span>
+        <span className="text-lg font-bold tracking-tight ms-2">{t('orderStatus')}</span>
+        <span
+          dir={getTextDir(brandName(branding))}
+          className="ms-auto text-sm font-bold tracking-tight text-zinc-500 truncate max-w-[45%]"
+        >
+          {brandName(branding)}
+        </span>
       </header>
 
       <main className="max-w-md mx-auto p-4 space-y-6 pt-6">
-        
+
         {/* Dynamic Status Banner */}
         <AnimatePresence mode="wait">
           <motion.div
@@ -88,19 +108,22 @@ export default function OrderStatusPage() {
             className="bg-white rounded-2xl p-6 shadow-sm border border-zinc-100 flex flex-col items-center text-center space-y-3"
           >
             {(() => {
-              const CurrentIcon = STATUS_STEPS[currentStatusIndex >= 0 ? currentStatusIndex : 0].icon;
+              const CurrentIcon = currentStep.icon;
               return (
-                <div className="h-16 w-16 bg-zinc-100 rounded-full flex items-center justify-center mb-2">
-                  <CurrentIcon className="w-8 h-8 text-zinc-900" />
+                <div
+                  className="h-16 w-16 rounded-full flex items-center justify-center mb-2"
+                  style={{ backgroundColor: 'var(--brand-secondary)', color: 'var(--brand-on-secondary)' }}
+                >
+                  <CurrentIcon className="w-8 h-8" />
                 </div>
               );
             })()}
             <div>
               <h1 className="text-2xl font-extrabold tracking-tight text-zinc-900 mb-1">
-                {STATUS_STEPS[currentStatusIndex >= 0 ? currentStatusIndex : 0].title}
+                {t(currentStep.titleKey)}
               </h1>
               <p className="text-zinc-500 font-medium">
-                {STATUS_STEPS[currentStatusIndex >= 0 ? currentStatusIndex : 0].description}
+                {t(currentStep.descKey)}
               </p>
             </div>
           </motion.div>
@@ -108,23 +131,23 @@ export default function OrderStatusPage() {
 
         {/* Stepper Timeline */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-          <h3 className="font-bold tracking-tight text-lg mb-6">Tracking Details</h3>
+          <h3 className="font-bold tracking-tight text-lg mb-6">{t('trackingDetails')}</h3>
           <div className="space-y-6 relative">
-            <div className="absolute top-3 bottom-5 left-[15px] w-0.5 bg-zinc-100" />
-            
+            <div className="absolute top-3 bottom-5 start-[15px] w-0.5 bg-zinc-100" />
+
             {STATUS_STEPS.map((step, index) => {
               const isCompleted = index <= currentStatusIndex;
               const isCurrent = index === currentStatusIndex;
               const StepIcon = step.icon;
-              
+
               return (
                 <div key={step.id} className="relative flex items-start gap-4">
-                  <motion.div 
+                  <motion.div
                     initial={false}
                     animate={{
-                      backgroundColor: isCompleted ? '#18181b' : '#f4f4f5',
-                      borderColor: isCompleted ? '#18181b' : '#e4e4e7',
-                      color: isCompleted ? '#ffffff' : '#a1a1aa',
+                      backgroundColor: isCompleted ? 'var(--brand-primary)' : '#f4f4f5',
+                      borderColor: isCompleted ? 'var(--brand-primary)' : '#e4e4e7',
+                      color: isCompleted ? 'var(--brand-on-primary)' : '#a1a1aa',
                       scale: isCurrent ? 1.1 : 1
                     }}
                     className="relative z-10 w-8 h-8 rounded-full border-2 flex flex-shrink-0 items-center justify-center transition-colors"
@@ -132,16 +155,16 @@ export default function OrderStatusPage() {
                     <StepIcon className="w-4 h-4" />
                   </motion.div>
                   <div className="pt-1.5 flex flex-col">
-                    <span className={`font-bold tracking-tight ${isCompleted ? 'text-zinc-900' : 'text-zinc-400'}`}>
-                      {step.title}
+                    <span className={`font-bold tracking-tight text-start ${isCompleted ? 'text-zinc-900' : 'text-zinc-400'}`}>
+                      {t(step.titleKey)}
                     </span>
                     {isCurrent && (
-                      <motion.span 
+                      <motion.span
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' }}
-                        className="text-xs font-medium text-zinc-500 mt-0.5"
+                        className="text-xs font-medium text-zinc-500 mt-0.5 text-start"
                       >
-                        {step.description}
+                        {t(step.descKey)}
                       </motion.span>
                     )}
                   </div>
@@ -154,7 +177,7 @@ export default function OrderStatusPage() {
         {/* Order Items Receipt Summary */}
         <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-zinc-100">
           <div className="p-4 bg-zinc-50 border-b border-zinc-100 flex justify-between items-center">
-            <h3 className="font-bold tracking-tight">Receipt Summary</h3>
+            <h3 className="font-bold tracking-tight">{t('receiptSummary')}</h3>
             <span className="text-xs font-bold px-2 py-1 bg-zinc-200 text-zinc-700 rounded-md">
               {order.order_id.substring(0, 8)}...
             </span>
@@ -163,18 +186,18 @@ export default function OrderStatusPage() {
             {order.items?.map((item, i) => (
               <div key={i} className="flex justify-between items-start">
                 <div className="flex gap-3">
-                  <span className="font-bold text-zinc-900">{item.quantity}x</span>
+                  <span className="font-bold text-zinc-900">{item.quantity}×</span>
                   <div className="flex flex-col">
-                    <span className="font-medium text-zinc-900">{item.name}</span>
-                    {item.notes && <span className="text-sm font-medium text-zinc-500 line-clamp-2">{item.notes}</span>}
+                    <span dir={getTextDir(item.name)} className="font-medium text-zinc-900 text-start">{item.name}</span>
+                    {item.notes && <span dir={getTextDir(item.notes)} className="text-sm font-medium text-zinc-500 line-clamp-2 text-start">{item.notes}</span>}
                   </div>
                 </div>
               </div>
             ))}
           </div>
           <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex justify-between items-center">
-            <span className="font-bold text-zinc-500">Total</span>
-            <span className="font-extrabold text-xl text-zinc-900">${order.total_price}</span>
+            <span className="font-bold text-zinc-500">{t('total')}</span>
+            <span className="font-extrabold text-xl text-zinc-900">{formatPrice(order.total_price)}</span>
           </div>
         </div>
       </main>

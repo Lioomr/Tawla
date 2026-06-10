@@ -1,6 +1,7 @@
 from collections import defaultdict
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Sum
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from rest_framework import status
@@ -16,13 +17,19 @@ from apps.orders.models import Order, OrderStatus, PaymentStatus
 from apps.orders.serializers import OrderDetailSerializer, PaymentCreateRequestSerializer, PaymentResponseSerializer
 from apps.orders.services import OrderValidationError, create_payment_for_order, update_order_status
 from apps.orders.staff_serializers import (
+    CASHIER_TABLE_STATUS_BY_ORDER_STATUS,
+    CashierTableOrderDetailSerializer,
+    CashierTableStatus,
+    CashierTableSummarySerializer,
     KitchenOrderStatusUpdateSerializer,
     KitchenOrderSummarySerializer,
     WaiterTableSummarySerializer,
+    get_cashier_payment_status,
 )
-from apps.restaurants.models import StaffRole
-from apps.restaurants.permissions import IsAdminStaff, IsKitchenOrAdmin, IsWaiterOrAdmin
+from apps.restaurants.models import StaffRole, Table
+from apps.restaurants.permissions import IsAdminStaff, IsCashierOrAdmin, IsKitchenOrAdmin, IsWaiterOrAdmin
 from apps.sessions.exceptions import ExpiredSessionError, InvalidSessionError
+from apps.sessions.models import TableSession
 from apps.sessions.services import get_valid_session_by_token
 
 
@@ -168,6 +175,89 @@ class WaiterOrderServeView(APIView):
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
 
+class CashierTableQueryMixin:
+    active_order_queryset = (
+        Order.objects.exclude(status=OrderStatus.CANCELLED)
+        .exclude(payment__status=PaymentStatus.PAID)
+        .select_related("payment")
+        .prefetch_related("items__menu_item")
+        .order_by("-created_at")
+    )
+
+    def get_cashier_tables(self, restaurant):
+        now = timezone.now()
+        return (
+            Table.objects.filter(restaurant=restaurant)
+            .prefetch_related(
+                Prefetch(
+                    "sessions",
+                    queryset=TableSession.objects.filter(expires_at__gt=now).order_by("-created_at"),
+                    to_attr="cashier_active_sessions",
+                ),
+                Prefetch(
+                    "orders",
+                    queryset=self.active_order_queryset,
+                    to_attr="cashier_active_orders",
+                ),
+            )
+            .order_by("name")
+        )
+
+    def get_active_order(self, table):
+        orders = getattr(table, "cashier_active_orders", [])
+        return orders[0] if orders else None
+
+    def get_table_status(self, table, active_order):
+        if active_order:
+            return CASHIER_TABLE_STATUS_BY_ORDER_STATUS.get(active_order.status, CashierTableStatus.EMPTY)
+        if getattr(table, "cashier_active_sessions", []):
+            return CashierTableStatus.ORDERING
+        return CashierTableStatus.EMPTY
+
+    def build_table_payload(self, table):
+        active_order = self.get_active_order(table)
+        table_status = self.get_table_status(table, active_order)
+        return {
+            "table_name": table.name,
+            "table_token": table.public_token,
+            "status": table_status,
+            "order_id": active_order.public_token if active_order else None,
+            "total_price": active_order.total_price if active_order else None,
+            "payment_status": get_cashier_payment_status(active_order) if active_order else None,
+        }
+
+
+class CashierTableListView(CashierTableQueryMixin, APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsCashierOrAdmin]
+
+    def get(self, request):
+        restaurant = request.user.staff_profile.restaurant
+        payload = [self.build_table_payload(table) for table in self.get_cashier_tables(restaurant)]
+        serializer = CashierTableSummarySerializer(payload, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class CashierTableOrderDetailView(CashierTableQueryMixin, APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsCashierOrAdmin]
+
+    def get(self, request, table_token):
+        restaurant = request.user.staff_profile.restaurant
+        tables = self.get_cashier_tables(restaurant)
+        try:
+            table = next(table for table in tables if table.public_token == table_token)
+        except StopIteration:
+            return error_response(code="table_not_found", message="table not found", status_code=status.HTTP_404_NOT_FOUND)
+
+        active_order = self.get_active_order(table)
+        payload = self.build_table_payload(table)
+        payload["order_status"] = active_order.status if active_order else None
+        payload["items"] = list(active_order.items.all()) if active_order else []
+        serializer = CashierTableOrderDetailSerializer(payload)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
 class PaymentCreateView(APIView):
     authentication_classes = [JWTAuthentication]
     throttle_classes = [PaymentCreateRateThrottle]
@@ -181,7 +271,7 @@ class PaymentCreateView(APIView):
         order = None
 
         if request.user and request.user.is_authenticated and hasattr(request.user, "staff_profile"):
-            if request.user.staff_profile.role not in {StaffRole.WAITER, StaffRole.ADMIN}:
+            if request.user.staff_profile.role not in {StaffRole.WAITER, StaffRole.CASHIER, StaffRole.ADMIN}:
                 return error_response(code="forbidden", message="forbidden", status_code=status.HTTP_403_FORBIDDEN)
 
             try:

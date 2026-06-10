@@ -32,6 +32,7 @@ Backend MVP is implemented for:
 * Kitchen order status updates
 * Waiter serve flow
 * Payment creation
+* Cashier table status and active order detail APIs
 * Admin menu, table, staff, orders, analytics, and audit log APIs
 * WebSocket order events
 * Rate limiting
@@ -218,8 +219,9 @@ Responsibilities:
 MVP payment clarification:
 
 * Customer sessions may record payment for their own order using `X-Session-Token`
-* Waiter and admin users may record payment using staff JWT
+* Waiter, cashier, and admin users may record payment using staff JWT
 * Waiter UI is the primary staff-facing payment surface in the current frontend
+* Cashier backend APIs support the future cashier dashboard payment flow
 * The current implementation records a single payment per order
 
 ### 7. Admin Module

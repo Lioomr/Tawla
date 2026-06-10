@@ -20,6 +20,7 @@ export default function StaffLoginPage() {
     if (isAuthenticated() && profile) {
       if (profile.role === 'KITCHEN') router.replace('/staff/kitchen');
       else if (profile.role === 'WAITER') router.replace('/staff/waiter');
+      else if (profile.role === 'CASHIER') router.replace('/staff/cashier');
       else if (profile.role === 'ADMIN') router.replace('/staff/admin');
     }
   }, [isAuthenticated, profile, router]);
@@ -33,6 +34,8 @@ export default function StaffLoginPage() {
         router.push('/staff/kitchen');
       } else if (data.staff.role === 'WAITER') {
         router.push('/staff/waiter');
+      } else if (data.staff.role === 'CASHIER') {
+        router.push('/staff/cashier');
       } else if (data.staff.role === 'ADMIN') {
         router.push('/staff/admin');
       }

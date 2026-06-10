@@ -13,6 +13,7 @@ from apps.restaurants.models import Staff, StaffRole
 
 KITCHEN_GROUP_PREFIX = "kitchen_updates"
 WAITER_GROUP_PREFIX = "waiter_updates"
+CASHIER_GROUP_PREFIX = "cashier_updates"
 
 
 def session_orders_group(session_token: str) -> str:
@@ -25,6 +26,10 @@ def kitchen_group(restaurant_id: int) -> str:
 
 def waiter_group(restaurant_id: int) -> str:
     return f"{WAITER_GROUP_PREFIX}_{restaurant_id}"
+
+
+def cashier_group(restaurant_id: int) -> str:
+    return f"{CASHIER_GROUP_PREFIX}_{restaurant_id}"
 
 
 class SessionOrdersConsumer(AsyncJsonWebsocketConsumer):
@@ -118,3 +123,8 @@ class KitchenConsumer(StaffUpdatesConsumer):
 class WaiterConsumer(StaffUpdatesConsumer):
     allowed_roles = {StaffRole.WAITER, StaffRole.ADMIN}
     group_factory = staticmethod(waiter_group)
+
+
+class CashierConsumer(StaffUpdatesConsumer):
+    allowed_roles = {StaffRole.CASHIER, StaffRole.ADMIN}
+    group_factory = staticmethod(cashier_group)

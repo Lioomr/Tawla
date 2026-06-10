@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MenuCategory } from "@/lib/api";
+import { getTextDir } from "@/lib/branding";
 
 interface CategoryNavProps {
   categories: MenuCategory[];
@@ -52,11 +53,17 @@ export function CategoryNav({ categories }: CategoryNavProps) {
               <li key={cat.id} className="snap-start shrink-0">
                 <button
                   type="button"
+                  dir={getTextDir(cat.name)}
                   onClick={() => scrollToCategory(cat.id)}
-                  className={`px-5 py-2 rounded-full text-sm font-semibold tracking-tight transition-all duration-300 ease-out ${
+                  style={
                     isActive
-                      ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-md shadow-zinc-200 dark:shadow-none"
-                      : "bg-zinc-100/50 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900/50 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      ? { backgroundColor: "var(--brand-accent)", color: "var(--brand-on-accent)" }
+                      : { color: "var(--brand-accent)", borderColor: "var(--brand-accent)" }
+                  }
+                  className={`px-5 py-2 rounded-full text-sm font-extrabold tracking-tight border transition-all duration-300 ease-out ${
+                    isActive
+                      ? "shadow-md shadow-zinc-200 dark:shadow-none"
+                      : "bg-white hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900"
                   }`}
                 >
                   {cat.name}

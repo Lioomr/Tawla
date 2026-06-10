@@ -103,7 +103,17 @@ Response:
 ```json
 {
   "session_token": "sess_xxx",
-  "expires_at": "2026-04-17T22:00:00Z"
+  "expires_at": "2026-04-17T22:00:00Z",
+  "restaurant": {
+    "name": "Café Noir",
+    "slug": "cafe-noir",
+    "tagline": "Where every cup tells a story",
+    "welcome_message": "Welcome! Scan your table and enjoy.",
+    "logo": "https://media.tawlax.com/logos/cafe-noir.png",
+    "banner_image": "https://media.tawlax.com/banners/cafe-noir.jpg",
+    "primary_color": "#C8963E",
+    "secondary_color": "#1A1A1A"
+  }
 }
 ```
 
@@ -111,7 +121,8 @@ Rules:
 
 * Validate table token
 * Create secure session
-* Return session token only
+* Return restaurant branding for the scanned table's restaurant
+* Do not expose internal `restaurant_id` or `table_id`
 
 ---
 
@@ -402,6 +413,7 @@ Rules:
 * Amount comes from server-side order total
 * Customer session payments are limited to orders owned by the current session
 * Staff payments are limited to orders in the authenticated staff member's restaurant
+* Staff payment creation is allowed for `WAITER`, `CASHIER`, and `ADMIN`
 * Payment write is auditable for staff actions
 
 ---
@@ -564,7 +576,7 @@ Endpoints:
 
 * `GET /cashier/tables/` — all tables with current status and active order summary
 * `GET /cashier/tables/{table_token}/order/` — full order details for a specific table
-* `POST /payments/` — record cash payment (shared with waiter)
+* `POST /payments/` — record cash payment using the shared payment endpoint
 
 ### Get Cashier Tables
 
@@ -595,7 +607,40 @@ Table status values:
 Rules:
 
 * Scoped to authenticated cashier's restaurant
-* Only tables with active sessions or recent orders are shown as non-EMPTY
+* Only tables with active sessions or unpaid, non-cancelled orders are shown as non-EMPTY
+* Paid or cancelled historical orders do not keep a table active
+
+### Get Cashier Table Order Detail
+
+`GET /cashier/tables/{table_token}/order/`
+
+Response:
+
+```json
+{
+  "table_name": "Table 3",
+  "table_token": "pub_tok_xxxx",
+  "status": "SERVED",
+  "order_id": "ord_x82k",
+  "order_status": "READY",
+  "total_price": "85.00",
+  "payment_status": "PENDING",
+  "items": [
+    {
+      "name": "Cola",
+      "quantity": 2,
+      "notes": "No ice"
+    }
+  ]
+}
+```
+
+Rules:
+
+* Scoped to authenticated cashier's restaurant
+* `table_token` is the public table token
+* `order_id` is the public order token
+* Internal `table_id` and `order.id` are never returned
 
 ---
 
@@ -635,3 +680,27 @@ Current default limits:
 * Consistent error handling
 * Per-restaurant branding via API
 * Cashier-facing payment and table management
+
+---
+
+## Image Removal APIs
+
+All image removal endpoints require:
+
+* `Authorization: Bearer <access_token>`
+* `ADMIN` role
+
+Endpoints:
+
+* `DELETE /admin/restaurant/branding/logo/`
+* `DELETE /admin/restaurant/branding/banner/`
+* `DELETE /admin/categories/{id}/image/`
+* `DELETE /admin/menu-items/{id}/image/`
+
+Rules:
+
+* Requests are scoped to the authenticated admin's restaurant
+* Removal clears the model image field
+* Local files are deleted from storage when present
+* Repeated removal is safe and returns the updated resource
+* Removal actions are audit logged
