@@ -19,3 +19,17 @@ backend/.env
 backend/.env.*
 !backend/.env.example
 !backend/.env.production.example
+
+# Local agent/tooling workspaces and generated demo artifacts
+.asset-work/
+.claude/
+.agents/skills/graphify/
+graphify/
+qr-codes/
+.gitmodules
+
+# Local prompt/reference drafts
+Docs/claude_branding_website_prompt.md
+Docs/higgsfield_asset_prompts.md
+Docs/tawlax_scroll_website_upgrade_prompt.md
+LOGO tawalax.png
