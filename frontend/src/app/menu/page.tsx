@@ -8,32 +8,70 @@ import { brandName, DEFAULT_BRAND, getTextDir } from "@/lib/branding";
 import { useLanguage } from "@/lib/i18n";
 import { BrandMark } from "@/components/branding/BrandMark";
 import { LanguageToggle } from "@/components/menu/LanguageToggle";
+import { localizeMenuDescription, localizeMenuName } from "@/lib/menuTranslations";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { CategoryNav } from "@/components/menu/CategoryNav";
 import { CategorySection } from "@/components/menu/CategorySection";
 import { CartWidget } from "@/components/cart/CartWidget";
 import { CartDrawer } from "@/components/cart/CartDrawer";
+import { LobbyBar } from "@/components/lobby/LobbyBar";
+import { ActiveOrdersPanel } from "@/components/menu/ActiveOrdersPanel";
+import { TableRequestActions } from "@/components/menu/TableRequestActions";
+import { GuestJoinedToast } from "@/components/lobby/GuestJoinedToast";
+import { GuestNameDialog } from "@/components/lobby/GuestNameDialog";
+import { useOrderWebSocket } from "@/hooks/useOrderWebSocket";
+import { useSessionRoster } from "@/hooks/useSessionRoster";
+import { useLobbyStore } from "@/store/useLobbyStore";
+import { isLobbyMode } from "@/lib/lobby";
 import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function MenuPage() {
   const router = useRouter();
   const { isValid } = useCustomerStore();
-  const { t, dir } = useLanguage();
+  const { t, dir, language } = useLanguage();
   const setBranding = useBrandingStore((s) => s.setBranding);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isManualNameOpen, setIsManualNameOpen] = useState(false);
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
     () => false
   );
 
+  // Lobby state: drives the shared-table UI and the "set your name" prompt.
+  const lobbyActive = isLobbyMode(useLobbyStore((s) => s.mode));
+  const hasCustomName = useLobbyStore((s) => s.hasCustomName);
+  const namePromptDismissed = useLobbyStore((s) => s.namePromptDismissed);
+  const dismissNamePrompt = useLobbyStore((s) => s.dismissNamePrompt);
+
+  // Customer session socket: also carries guest_joined/guest_updated so a solo
+  // device flips into lobby mode the moment a second guest scans the table.
+  useOrderWebSocket();
+
+  // Authoritative table roster: hydrates the participant list from the backend
+  // (not just realtime deltas) and keeps mode/guest identity in sync.
+  useSessionRoster();
+
   useEffect(() => {
     if (mounted && !isValid()) {
       router.replace("/session-expired");
     }
   }, [mounted, isValid, router]);
+
+  // Open the name dialog when (a) the guest taps "add/edit name", or (b) lobby
+  // mode is active and they have not yet named themselves nor dismissed the
+  // prompt. Derived during render — solo users never see it, and no effect
+  // writes state. Closing dismisses the auto-prompt for the rest of the session.
+  const shouldAutoPromptName = mounted && lobbyActive && !hasCustomName && !namePromptDismissed;
+  const isNameDialogOpen = isManualNameOpen || shouldAutoPromptName;
+
+  const closeNameDialog = () => {
+    setIsManualNameOpen(false);
+    // Don't auto-reopen this session; the lobby bar still offers a manual entry.
+    dismissNamePrompt();
+  };
 
   const { data: menuData, isLoading, error, refetch } = useMenu();
 
@@ -77,11 +115,12 @@ export default function MenuPage() {
 
   const categories = menuData?.categories || [];
   const restaurant = menuData?.restaurant;
-  const displayName = brandName(restaurant);
-  const subtitle =
+  const displayName = localizeMenuName(brandName(restaurant), language);
+  const rawSubtitle =
     restaurant?.welcome_message?.trim() ||
     restaurant?.tagline?.trim() ||
     DEFAULT_BRAND.tagline;
+  const subtitle = localizeMenuDescription(rawSubtitle, language);
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 pb-32" dir={dir}>
@@ -105,7 +144,7 @@ export default function MenuPage() {
         <div className="max-w-md mx-auto">
           <div className="flex items-start justify-between gap-3">
             {restaurant?.logo ? (
-              <BrandMark branding={restaurant} size={48} />
+              <BrandMark branding={restaurant} displayName={displayName} size={48} />
             ) : (
               <h1
                 className="text-4xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50 min-w-0 break-words"
@@ -125,6 +164,12 @@ export default function MenuPage() {
           </p>
         </div>
       </header>
+
+      <LobbyBar onEditName={() => setIsManualNameOpen(true)} />
+
+      <ActiveOrdersPanel onViewOrder={(orderId) => router.push(`/order/${orderId}`)} />
+
+      <TableRequestActions />
 
       <CategoryNav categories={categories} />
 
@@ -153,6 +198,9 @@ export default function MenuPage() {
 
       <CartWidget onOpenCart={() => setIsCartOpen(true)} />
       <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
+
+      <GuestJoinedToast />
+      <GuestNameDialog isOpen={isNameDialogOpen} onClose={closeNameDialog} />
     </div>
   );
 }

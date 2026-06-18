@@ -14,6 +14,7 @@ Uses:
 
 * `table_token` to start a table session
 * `X-Session-Token` for customer-protected endpoints
+* `X-Guest-Token` for guest-specific customer actions when applicable
 
 ### Staff
 
@@ -56,6 +57,7 @@ Common error codes:
 
 * `invalid_request`
 * `invalid_session`
+* `invalid_guest`
 * `expired_session`
 * `authentication_failed`
 * `not_authenticated`
@@ -74,6 +76,8 @@ Common error codes:
 * `category_has_items`
 * `menu_item_not_found`
 * `menu_item_in_use`
+* `table_request_not_found`
+* `table_request_validation_error`
 * `image_upload_error`
 * `restaurant_not_found`
 * `invalid_color_format`
@@ -103,6 +107,9 @@ Response:
 ```json
 {
   "session_token": "sess_xxx",
+  "guest_token": "guest_xxx",
+  "mode": "solo",
+  "guest_count": 1,
   "expires_at": "2026-04-17T22:00:00Z",
   "restaurant": {
     "name": "Café Noir",
@@ -120,9 +127,93 @@ Response:
 Rules:
 
 * Validate table token
-* Create secure session
+* Create a secure session when no valid active session exists for the table
+* Join the existing valid active session when another device scans the same table token
+* Silently create a default guest/device record for every scan
+* Return `mode = solo` when guest count is 1 and `mode = lobby` when guest count is 2 or more
 * Return restaurant branding for the scanned table's restaurant
-* Do not expose internal `restaurant_id` or `table_id`
+* Do not expose internal `restaurant_id`, `table_id`, `session.id`, or `guest.id`
+
+### Get Current Session Roster
+
+`GET /table/session/`
+
+Headers:
+
+* `X-Session-Token: <session_token>`
+* `X-Guest-Token: <guest_token>`
+
+Response:
+
+```json
+{
+  "mode": "lobby",
+  "guest_count": 2,
+  "current_guest": {
+    "guest_token": "guest_xxx",
+    "display_name": "Guest 1",
+    "avatar_color": "#2563EB"
+  },
+  "guests": [
+    {
+      "guest_token": "guest_xxx",
+      "display_name": "Guest 1",
+      "avatar_color": "#2563EB"
+    },
+    {
+      "guest_token": "guest_yyy",
+      "display_name": "Guest 2",
+      "avatar_color": "#DC2626"
+    }
+  ]
+}
+```
+
+Rules:
+
+* Session must be valid and unexpired
+* Guest token must belong to the current session
+* The current guest `last_seen_at` may be refreshed during validation
+* Return `mode = solo` when guest count is 1 and `mode = lobby` when guest count is 2 or more
+* Guest objects expose only `guest_token`, `display_name`, and `avatar_color`
+* Do not expose `session_token`, internal `session.id`, `guest.id`, `table_id`, or other database identifiers
+
+### Update Current Guest
+
+`PATCH /table/session/guest/`
+
+Headers:
+
+* `X-Session-Token: <session_token>`
+* `X-Guest-Token: <guest_token>`
+
+Request:
+
+```json
+{
+  "display_name": "Alice"
+}
+```
+
+Response:
+
+```json
+{
+  "guest_token": "guest_xxx",
+  "display_name": "Alice",
+  "avatar_color": "#2563EB",
+  "mode": "lobby",
+  "guest_count": 2
+}
+```
+
+Rules:
+
+* Session must be valid and unexpired
+* Guest token must belong to the current session
+* Display name is optional; blank or missing input restores the generated `Guest N` name
+* Display name is trimmed, length-limited, and rejects unsafe control or HTML delimiter characters
+* Do not expose internal `session.id` or `guest.id`
 
 ---
 
@@ -190,6 +281,7 @@ Rules:
 Headers:
 
 * `X-Session-Token: <session_token>`
+* Optional `X-Guest-Token: <guest_token>`
 
 Request:
 
@@ -222,6 +314,7 @@ Rules:
 * Validate item ownership and availability
 * Validate quantity
 * Never trust client price
+* If `X-Guest-Token` is provided, associate the order with that guest only after verifying it belongs to the same session
 * Broadcast `order_created`
 
 ### Get Session Orders
@@ -232,6 +325,26 @@ Headers:
 
 * `X-Session-Token: <session_token>`
 
+Response:
+
+```json
+{
+  "orders": [
+    {
+      "order_id": "ord_x82k",
+      "status": "NEW",
+      "total_price": "40.00",
+      "created_at": "2026-04-17T21:10:00Z",
+      "guest": {
+        "guest_token": "guest_xxx",
+        "display_name": "Guest 1",
+        "avatar_color": "#2563EB"
+      }
+    }
+  ]
+}
+```
+
 ### Get Order Detail
 
 `GET /orders/{order_token}/`
@@ -240,10 +353,114 @@ Headers:
 
 * `X-Session-Token: <session_token>`
 
+Response:
+
+```json
+{
+  "order_id": "ord_x82k",
+  "status": "NEW",
+  "total_price": "40.00",
+  "created_at": "2026-04-17T21:10:00Z",
+  "items": [
+    {
+      "name": "Cola",
+      "quantity": 2,
+      "notes": "No ice"
+    }
+  ],
+  "guest": null
+}
+```
+
 Rules:
 
 * Only public order token in URL
 * Must be limited to current session
+* `guest` is either `null` or an object containing only `guest_token`, `display_name`, and `avatar_color`
+
+---
+
+## Customer Table Request APIs
+
+### Create Table Request
+
+`POST /table/requests/`
+
+Headers:
+
+* `X-Session-Token: <session_token>`
+* Optional `X-Guest-Token: <guest_token>`
+
+Request:
+
+```json
+{
+  "type": "CALL_WAITER"
+}
+```
+
+Valid types:
+
+* `CALL_WAITER`
+* `REQUEST_BILL`
+* `NEED_HELP`
+
+Response:
+
+```json
+{
+  "request_token": "treq_x82k",
+  "type": "CALL_WAITER",
+  "status": "OPEN",
+  "created_at": "2026-04-17T21:10:00Z"
+}
+```
+
+Rules:
+
+* Session must be valid and unexpired
+* If `X-Guest-Token` is provided, it must belong to the same session
+* Request is scoped to the session-derived restaurant and table
+* Custom free-text messages are not accepted
+* Internal `table_request.id`, `table_id`, `session_id`, and `guest_id` are never returned
+* Broadcast `table_request_created` to the waiter channel
+
+### Get Session Table Requests
+
+`GET /table/requests/`
+
+Headers:
+
+* `X-Session-Token: <session_token>`
+
+Response:
+
+```json
+{
+  "requests": [
+    {
+      "request_token": "treq_x82k",
+      "request_type": "REQUEST_BILL",
+      "status": "RESOLVED",
+      "created_at": "2026-04-17T21:10:00Z",
+      "resolved_at": "2026-04-17T21:12:00Z",
+      "guest": {
+        "guest_token": "guest_xxx",
+        "display_name": "Guest 1",
+        "avatar_color": "#2563EB"
+      }
+    }
+  ]
+}
+```
+
+Rules:
+
+* Session must be valid and unexpired
+* Response is limited to the current session only
+* Requests are ordered newest first
+* `guest` is either `null` or public guest attribution only
+* Internal `table_request.id`, `table_id`, `session_id`, `guest_id`, and staff IDs are never returned
 
 ---
 
@@ -323,6 +540,33 @@ Headers:
 
 * `Authorization: Bearer <access_token>`
 
+Response:
+
+```json
+{
+  "orders": [
+    {
+      "order_id": "ord_x82k",
+      "table": "Table 5",
+      "status": "NEW",
+      "created_at": "2026-04-17T21:10:00Z",
+      "items": [
+        {
+          "name": "Cola",
+          "quantity": 2,
+          "notes": "No ice"
+        }
+      ],
+      "guest": {
+        "guest_token": "guest_xxx",
+        "display_name": "Guest 1",
+        "avatar_color": "#2563EB"
+      }
+    }
+  ]
+}
+```
+
 ### Update Order Status
 
 `PATCH /kitchen/orders/{order_token}/status/`
@@ -357,6 +601,7 @@ Rules:
 * Kitchen endpoint must reject `SERVED`
 * Broadcast `order_updated`
 * Audit log required
+* Order responses include `guest: null` or public guest attribution only
 
 ---
 
@@ -369,6 +614,100 @@ Rules:
 Headers:
 
 * `Authorization: Bearer <access_token>`
+
+Response:
+
+```json
+{
+  "tables": [
+    {
+      "table": "Table 5",
+      "active_order_count": 1,
+      "latest_status": "NEW",
+      "payment_status": null,
+      "orders": [
+        {
+          "order_id": "ord_x82k",
+          "status": "NEW",
+          "total_price": "40.00",
+          "created_at": "2026-04-17T21:10:00Z",
+          "payment_status": null,
+          "guest": null
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Get Open Table Requests
+
+`GET /waiter/requests/`
+
+Headers:
+
+* `Authorization: Bearer <access_token>`
+
+Response:
+
+```json
+{
+  "requests": [
+    {
+      "request_token": "treq_x82k",
+      "type": "NEED_HELP",
+      "status": "OPEN",
+      "table": "Table 5",
+      "created_at": "2026-04-17T21:10:00Z",
+      "resolved_at": null,
+      "guest": {
+        "guest_token": "guest_xxx",
+        "display_name": "Guest 1",
+        "avatar_color": "#2563EB"
+      }
+    }
+  ]
+}
+```
+
+Rules:
+
+* Waiter or admin role required
+* Response is scoped to the authenticated staff member's restaurant
+* Only `OPEN` requests for active customer sessions are returned
+* Request identity uses only `request_token`
+* Internal `table_request.id`, `table_id`, `session_id`, `guest_id`, and staff IDs are never returned
+
+### Resolve Table Request
+
+`PATCH /waiter/requests/{request_token}/resolve/`
+
+Headers:
+
+* `Authorization: Bearer <access_token>`
+
+Response:
+
+```json
+{
+  "request_token": "treq_x82k",
+  "type": "NEED_HELP",
+  "status": "RESOLVED",
+  "table": "Table 5",
+  "created_at": "2026-04-17T21:10:00Z",
+  "resolved_at": "2026-04-17T21:12:00Z",
+  "guest": null
+}
+```
+
+Rules:
+
+* Waiter or admin role required
+* Request must belong to the authenticated staff member's restaurant
+* Already resolved requests are rejected
+* Resolution creates an audit log
+* Broadcast `table_request_resolved` to the customer session channel
+* Internal IDs are never returned
 
 ### Mark Order as Served
 
@@ -383,6 +722,7 @@ Rules:
 * Waiter or admin role required
 * Only valid when the current order status is `READY`
 * Audit log required
+* Order responses include `guest: null` or public guest attribution only
 
 ---
 
@@ -460,10 +800,62 @@ Shared `order_updated` payload:
 }
 ```
 
+Customer `guest_joined` payload:
+
+```json
+{
+  "type": "guest_joined",
+  "guest_token": "guest_xxx",
+  "display_name": "Guest 2",
+  "avatar_color": "#DC2626",
+  "guest_count": 2,
+  "mode": "lobby"
+}
+```
+
+Customer `guest_updated` payload:
+
+```json
+{
+  "type": "guest_updated",
+  "guest_token": "guest_xxx",
+  "display_name": "Alice",
+  "avatar_color": "#DC2626",
+  "guest_count": 2,
+  "mode": "lobby"
+}
+```
+
+Waiter `table_request_created` payload:
+
+```json
+{
+  "type": "table_request_created",
+  "request_token": "treq_x82k",
+  "request_type": "CALL_WAITER",
+  "table": "Table 5",
+  "status": "OPEN"
+}
+```
+
+Customer `table_request_resolved` payload:
+
+```json
+{
+  "type": "table_request_resolved",
+  "request_token": "treq_x82k",
+  "request_type": "CALL_WAITER",
+  "status": "RESOLVED"
+}
+```
+
 Rules:
 
 * Payloads must stay small
 * No internal IDs
+* Guest events are sent only to the customer session channel
+* Table request created events are sent only to the waiter channel
+* Table request resolved events are sent only to the customer session channel
 * Kitchen and waiter sockets require a valid staff JWT in the query string
 * Staff socket subscriptions are scoped to the authenticated staff member's restaurant
 * Frontend must support reconnect and resync
@@ -498,6 +890,36 @@ Rules:
 * Public tokens must remain public-facing identifiers where applicable
 * Image uploads accept `multipart/form-data` with a single `image` field
 * Image uploads must validate file type (JPEG, PNG, WebP only) and max size (5MB)
+
+### Admin Orders
+
+`GET /admin/orders/`
+
+Response:
+
+```json
+{
+  "orders": [
+    {
+      "order_id": "ord_x82k",
+      "table": "Table 5",
+      "status": "SERVED",
+      "total_price": "40.00",
+      "payment_status": "PAID",
+      "created_at": "2026-04-17T21:10:00Z",
+      "guest": {
+        "guest_token": "guest_xxx",
+        "display_name": "Guest 1",
+        "avatar_color": "#2563EB"
+      }
+    }
+  ]
+}
+```
+
+Rules:
+
+* Admin order responses include `guest: null` or public guest attribution only
 
 ### Admin Branding
 
@@ -592,7 +1014,12 @@ Response:
     "status": "SERVED",
     "order_id": "ord_x82k",
     "total_price": "85.00",
-    "payment_status": "PENDING"
+    "payment_status": "PENDING",
+    "guest": {
+      "guest_token": "guest_xxx",
+      "display_name": "Guest 1",
+      "avatar_color": "#2563EB"
+    }
   }
 ]
 ```
@@ -625,6 +1052,7 @@ Response:
   "order_status": "READY",
   "total_price": "85.00",
   "payment_status": "PENDING",
+  "guest": null,
   "items": [
     {
       "name": "Cola",
@@ -640,6 +1068,7 @@ Rules:
 * Scoped to authenticated cashier's restaurant
 * `table_token` is the public table token
 * `order_id` is the public order token
+* `guest` is either `null` or public guest attribution only
 * Internal `table_id` and `order.id` are never returned
 
 ---
@@ -650,12 +1079,14 @@ Current protected endpoints:
 
 * Staff login
 * Order creation
+* Table request creation
 * Payment creation
 
 Current default limits:
 
 * Staff login: `5/minute`
 * Order creation: `10/minute`
+* Table request creation: `10/minute`
 * Payment creation: `5/minute`
 
 ---
@@ -663,9 +1094,13 @@ Current default limits:
 ## Validation Rules
 
 * Reject expired `session_token`
+* Reject guest tokens that do not belong to the current session
 * Ensure `session.table_id` matches `order.table_id`
+* Ensure `session.table_id` matches `table_request.table_id`
 * Validate menu item availability
+* Validate table request type against the allowed enum
 * Reject invalid order status transitions
+* Reject already resolved table requests
 * Prevent duplicate order abuse
 * Reject unauthorized role access
 

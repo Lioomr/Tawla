@@ -20,13 +20,17 @@ Database:
 We NEVER expose:
 
 * `table_id`
+* `table_session.id`
 * `order.id`
+* `table_request.id`
 
 We expose:
 
 * `table.public_token`
 * `table_session.session_token`
+* `session_guest.guest_token`
 * `order.public_token`
+* `table_request.request_token`
 
 ---
 
@@ -100,6 +104,32 @@ Rules:
 * `session_token` must be random
 * Session duration is currently 60 minutes
 * Expired sessions must be rejected by API and WebSocket auth
+* A valid active table session is reused when another device scans the same table token
+
+---
+
+## SessionGuest
+
+Represents one customer device/guest inside a table session.
+
+Fields:
+
+* `id`
+* `session_id`
+* `guest_token`
+* `display_name`
+* `avatar_color`
+* `joined_at`
+* `last_seen_at`
+* `created_at`
+* `updated_at`
+
+Rules:
+
+* `guest_token` must be random and non-sequential
+* Guest records are scoped to one `TableSession`
+* Default display names are generated as `Guest 1`, `Guest 2`, etc.
+* Internal `session_id` and `guest.id` are never exposed in customer APIs or realtime payloads
 
 ---
 
@@ -149,6 +179,7 @@ Fields:
 * `restaurant_id`
 * `table_id`
 * `session_id`
+* `guest_id` — nullable, when a customer guest token is provided
 * `status`
 * `total_price`
 * `created_at`
@@ -158,6 +189,7 @@ Rules:
 
 * Must be linked to `session_id`
 * Must match `session.table_id`
+* If linked to `guest_id`, guest must belong to the same session
 * `public_token` must be random and non-sequential
 
 Indexes:
@@ -200,6 +232,42 @@ Rules:
 
 * One payment record per order in current MVP
 * Amount must come from server-side order total
+
+---
+
+## TableRequest
+
+Represents a customer request for waiter attention from an active table session.
+
+Fields:
+
+* `id`
+* `request_token`
+* `restaurant_id`
+* `table_id`
+* `session_id`
+* `guest_id` - nullable, when a customer guest token is provided
+* `request_type`
+* `status`
+* `resolved_by_id` - nullable staff reference
+* `resolved_at` - nullable
+* `created_at`
+* `updated_at`
+
+Rules:
+
+* Must be linked to `session_id`
+* Must match `session.table_id`
+* Must match `session.table.restaurant_id`
+* If linked to `guest_id`, guest must belong to the same session
+* `request_token` must be random and non-sequential
+* Internal `id`, `table_id`, `session_id`, `guest_id`, and `resolved_by_id` are never exposed in APIs or realtime payloads
+* Resolution must be performed by a waiter or admin in the same restaurant and must be audit logged
+
+Indexes:
+
+* `(restaurant_id, status)`
+* `(session_id, status)`
 
 ---
 
@@ -265,6 +333,17 @@ Purpose:
 * PAID
 * FAILED
 
+### TableRequestType
+
+* CALL_WAITER
+* REQUEST_BILL
+* NEED_HELP
+
+### TableRequestStatus
+
+* OPEN
+* RESOLVED
+
 ### StaffRole
 
 * WAITER
@@ -293,9 +372,16 @@ Canonical note:
 * Restaurant -> MenuItems (1:N)
 * Restaurant -> Staff (1:N)
 * Restaurant -> Orders (1:N)
+* Restaurant -> TableRequests (1:N)
 * Restaurant -> AuditLogs (1:N)
 * Table -> TableSessions (1:N)
+* Table -> TableRequests (1:N)
+* TableSession -> SessionGuests (1:N)
 * TableSession -> Orders (1:N)
+* TableSession -> TableRequests (1:N)
+* SessionGuest -> Orders (1:N, optional)
+* SessionGuest -> TableRequests (1:N, optional)
+* Staff -> resolved TableRequests (1:N, optional)
 * Order -> OrderItems (1:N)
 * Order -> Payment (1:1)
 
@@ -307,8 +393,10 @@ Canonical note:
 2. `session.table_id` MUST match `order.table_id`
 3. Expired sessions MUST be rejected
 4. `table_id` MUST NEVER be exposed in APIs
-5. `order.id` MUST NEVER be exposed in APIs
-6. Public tokens MUST be random and non-guessable
+5. `table_session.id` and `session_guest.id` MUST NEVER be exposed in APIs
+6. `order.id` MUST NEVER be exposed in APIs
+7. `table_request.id` MUST NEVER be exposed in APIs
+8. Public tokens MUST be random and non-guessable
 
 ---
 

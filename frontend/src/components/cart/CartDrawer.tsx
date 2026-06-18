@@ -8,6 +8,10 @@ import { ApiError } from "@/lib/api";
 import { getTextDir } from "@/lib/branding";
 import { useLanguage } from "@/lib/i18n";
 import { formatPrice } from "@/lib/format";
+import { localizeMenuName } from "@/lib/menuTranslations";
+import { useLobbyStore } from "@/store/useLobbyStore";
+import { isLobbyMode } from "@/lib/lobby";
+import { LobbyTableOrders } from "@/components/lobby/LobbyTableOrders";
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -20,9 +24,15 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   const totalItems = getTotalItems();
   const createOrder = useCreateOrder();
   const router = useRouter();
-  const { t, dir } = useLanguage();
+  const { t, dir, language } = useLanguage();
+  const lobby = isLobbyMode(useLobbyStore((s) => s.mode));
 
   const [errorPayload, setErrorPayload] = useState<string | null>(null);
+
+  const handleViewOrder = (orderId: string) => {
+    onClose();
+    router.push(`/order/${orderId}`);
+  };
 
   const handleCheckout = async () => {
     setErrorPayload(null);
@@ -98,16 +108,29 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col gap-3">
+              {lobby && (
+                <h3 className="text-sm font-extrabold tracking-tight text-zinc-900 dark:text-zinc-100 px-1">
+                  {t("lobbyYourItems")}
+                </h3>
+              )}
               {items.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center gap-3 text-zinc-400 dark:text-zinc-500">
-                  <ShoppingBag className="w-10 h-10" />
-                  <p className="font-semibold text-zinc-500 dark:text-zinc-400">{t("cartEmpty")}</p>
-                  <p className="text-sm">{t("cartEmptyHint")}</p>
-                </div>
+                lobby ? (
+                  <div className="flex flex-col items-center text-center gap-2 text-zinc-400 dark:text-zinc-500 py-6">
+                    <ShoppingBag className="w-8 h-8" />
+                    <p className="text-sm font-semibold text-zinc-500 dark:text-zinc-400">{t("cartEmptyHint")}</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center gap-3 text-zinc-400 dark:text-zinc-500">
+                    <ShoppingBag className="w-10 h-10" />
+                    <p className="font-semibold text-zinc-500 dark:text-zinc-400">{t("cartEmpty")}</p>
+                    <p className="text-sm">{t("cartEmptyHint")}</p>
+                  </div>
+                )
               ) : (
                 items.map((item) => {
                   const unit = parseFloat(item.menuItem.price);
                   const lineTotal = unit * item.quantity;
+                  const itemName = localizeMenuName(item.menuItem.name, language);
                   return (
                     <div
                       key={item.cartItemId}
@@ -115,10 +138,10 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <span
-                          dir={getTextDir(item.menuItem.name)}
+                          dir={getTextDir(itemName)}
                           className="font-bold text-zinc-900 dark:text-zinc-100 text-start leading-snug"
                         >
-                          {item.menuItem.name}
+                          {itemName}
                         </span>
                         <span className="font-extrabold text-zinc-900 dark:text-zinc-100 shrink-0">
                           {formatPrice(lineTotal)}
@@ -168,6 +191,8 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                   {errorPayload}
                 </div>
               )}
+
+              {lobby && <LobbyTableOrders enabled={isOpen} onViewOrder={handleViewOrder} />}
             </div>
 
             <div className="p-6 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800/60 pb-8">

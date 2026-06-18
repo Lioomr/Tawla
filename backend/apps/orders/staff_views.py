@@ -13,9 +13,15 @@ from apps.core.responses import error_response
 from apps.core.services import create_audit_log
 from apps.core.throttling import PaymentCreateRateThrottle
 from apps.orders.admin_serializers import AdminOrderSerializer
-from apps.orders.models import Order, OrderStatus, PaymentStatus
+from apps.orders.models import Order, OrderStatus, PaymentStatus, TableRequest, TableRequestStatus
 from apps.orders.serializers import OrderDetailSerializer, PaymentCreateRequestSerializer, PaymentResponseSerializer
-from apps.orders.services import OrderValidationError, create_payment_for_order, update_order_status
+from apps.orders.services import (
+    OrderValidationError,
+    TableRequestValidationError,
+    create_payment_for_order,
+    resolve_table_request,
+    update_order_status,
+)
 from apps.orders.staff_serializers import (
     CASHIER_TABLE_STATUS_BY_ORDER_STATUS,
     CashierTableOrderDetailSerializer,
@@ -24,6 +30,7 @@ from apps.orders.staff_serializers import (
     KitchenOrderStatusUpdateSerializer,
     KitchenOrderSummarySerializer,
     WaiterTableSummarySerializer,
+    WaiterTableRequestSerializer,
     get_cashier_payment_status,
 )
 from apps.restaurants.models import StaffRole, Table
@@ -41,7 +48,7 @@ class KitchenOrderListView(APIView):
         restaurant = request.user.staff_profile.restaurant
         orders = (
             Order.objects.filter(restaurant=restaurant)
-            .select_related("table")
+            .select_related("table", "guest")
             .prefetch_related("items__menu_item")
             .order_by("-created_at")
         )
@@ -68,7 +75,7 @@ class KitchenOrderStatusUpdateView(APIView):
             )
 
         try:
-            order = Order.objects.select_related("restaurant", "table", "session").get(
+            order = Order.objects.select_related("restaurant", "table", "session", "guest").get(
                 public_token=order_token,
                 restaurant=request.user.staff_profile.restaurant,
             )
@@ -108,7 +115,7 @@ class WaiterTableListView(APIView):
         restaurant = request.user.staff_profile.restaurant
         orders = (
             Order.objects.filter(restaurant=restaurant)
-            .select_related("table", "payment")
+            .select_related("table", "payment", "guest")
             .order_by("table__name", "-created_at")
         )
 
@@ -143,7 +150,7 @@ class WaiterOrderServeView(APIView):
 
     def patch(self, request, order_token):
         try:
-            order = Order.objects.select_related("restaurant", "table", "session").get(
+            order = Order.objects.select_related("restaurant", "table", "session", "guest").get(
                 public_token=order_token,
                 restaurant=request.user.staff_profile.restaurant,
             )
@@ -175,11 +182,80 @@ class WaiterOrderServeView(APIView):
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
 
+class WaiterTableRequestListView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsWaiterOrAdmin]
+
+    def get(self, request):
+        restaurant = request.user.staff_profile.restaurant
+        table_requests = (
+            TableRequest.objects.filter(
+                restaurant=restaurant,
+                status=TableRequestStatus.OPEN,
+                session__expires_at__gt=timezone.now(),
+            )
+            .select_related("table", "guest")
+            .order_by("created_at")
+        )
+        serializer = WaiterTableRequestSerializer(table_requests, many=True)
+        return Response({"requests": serializer.data}, status=status.HTTP_200_OK)
+
+
+class WaiterTableRequestResolveView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsWaiterOrAdmin]
+
+    def patch(self, request, request_token):
+        try:
+            table_request = (
+                TableRequest.objects.select_related("restaurant", "table", "session", "guest")
+                .get(
+                    request_token=request_token,
+                    restaurant=request.user.staff_profile.restaurant,
+                )
+            )
+        except TableRequest.DoesNotExist:
+            return error_response(
+                code="table_request_not_found",
+                message="table request not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        previous_status = table_request.status
+        try:
+            table_request = resolve_table_request(
+                table_request=table_request,
+                actor_staff=request.user.staff_profile,
+            )
+        except TableRequestValidationError as exc:
+            return error_response(
+                code="table_request_validation_error",
+                message=str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        create_audit_log(
+            restaurant=table_request.restaurant,
+            actor_staff=request.user.staff_profile,
+            action="waiter.table_request_resolved",
+            target_type="table_request",
+            target_identifier=table_request.request_token,
+            metadata={
+                "from_status": previous_status,
+                "to_status": table_request.status,
+                "request_type": table_request.request_type,
+                "table": table_request.table.name,
+            },
+        )
+        serializer = WaiterTableRequestSerializer(table_request)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
 class CashierTableQueryMixin:
     active_order_queryset = (
         Order.objects.exclude(status=OrderStatus.CANCELLED)
         .exclude(payment__status=PaymentStatus.PAID)
-        .select_related("payment")
+        .select_related("payment", "guest")
         .prefetch_related("items__menu_item")
         .order_by("-created_at")
     )
@@ -224,6 +300,7 @@ class CashierTableQueryMixin:
             "order_id": active_order.public_token if active_order else None,
             "total_price": active_order.total_price if active_order else None,
             "payment_status": get_cashier_payment_status(active_order) if active_order else None,
+            "guest": active_order.guest if active_order else None,
         }
 
 
@@ -332,7 +409,7 @@ class AdminOrderListView(APIView):
         restaurant = request.user.staff_profile.restaurant
         orders = (
             Order.objects.filter(restaurant=restaurant)
-            .select_related("table", "payment")
+            .select_related("table", "payment", "guest")
             .order_by("-created_at")
         )
         serializer = AdminOrderSerializer(orders, many=True)

@@ -4,8 +4,21 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.menu.models import MenuItem
-from apps.orders.events import broadcast_order_created, broadcast_order_updated
-from apps.orders.models import Order, OrderItem, OrderStatus, Payment, PaymentStatus
+from apps.orders.events import (
+    broadcast_order_created,
+    broadcast_order_updated,
+    broadcast_table_request_created,
+    broadcast_table_request_resolved,
+)
+from apps.orders.models import (
+    Order,
+    OrderItem,
+    OrderStatus,
+    Payment,
+    PaymentStatus,
+    TableRequest,
+    TableRequestStatus,
+)
 
 
 ORDER_COOLDOWN_SECONDS = 10
@@ -22,9 +35,16 @@ class OrderValidationError(Exception):
     pass
 
 
-def create_order_for_session(*, session, items_data):
+class TableRequestValidationError(Exception):
+    pass
+
+
+def create_order_for_session(*, session, items_data, guest=None):
     if not items_data:
         raise OrderValidationError("items are required")
+
+    if guest is not None and guest.session_id != session.id:
+        raise OrderValidationError("invalid guest")
 
     latest_order = session.orders.order_by("-created_at").first()
     if latest_order and (timezone.now() - latest_order.created_at).total_seconds() < ORDER_COOLDOWN_SECONDS:
@@ -51,6 +71,7 @@ def create_order_for_session(*, session, items_data):
             restaurant=session.table.restaurant,
             table=session.table,
             session=session,
+            guest=guest,
             status=OrderStatus.NEW,
             total_price=Decimal("0.00"),
         )
@@ -109,3 +130,48 @@ def create_payment_for_order(*, order, method):
         )
 
     return payment
+
+
+def create_table_request_for_session(*, session, request_type, guest=None):
+    if session.expires_at <= timezone.now():
+        raise TableRequestValidationError("expired session")
+
+    if guest is not None and guest.session_id != session.id:
+        raise TableRequestValidationError("invalid guest")
+
+    table_request = TableRequest.objects.create(
+        restaurant=session.table.restaurant,
+        table=session.table,
+        session=session,
+        guest=guest,
+        request_type=request_type,
+        status=TableRequestStatus.OPEN,
+    )
+    broadcast_table_request_created(table_request=table_request)
+    return table_request
+
+
+def resolve_table_request(*, table_request, actor_staff):
+    with transaction.atomic():
+        locked_request = (
+            TableRequest.objects.select_for_update()
+            .select_related("restaurant", "table", "session")
+            .get(pk=table_request.pk)
+        )
+        if locked_request.status == TableRequestStatus.RESOLVED:
+            raise TableRequestValidationError("request already resolved")
+
+        locked_request.status = TableRequestStatus.RESOLVED
+        locked_request.resolved_by = actor_staff
+        locked_request.resolved_at = timezone.now()
+        locked_request.save(
+            update_fields=[
+                "status",
+                "resolved_by",
+                "resolved_at",
+                "updated_at",
+            ]
+        )
+
+    broadcast_table_request_resolved(table_request=locked_request)
+    return locked_request

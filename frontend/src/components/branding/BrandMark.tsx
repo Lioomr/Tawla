@@ -7,13 +7,14 @@ interface BrandMarkProps {
   size?: number;
   /** Show the restaurant name next to/instead of the logo. */
   showName?: boolean;
+  displayName?: string;
   className?: string;
 }
 
 // Renders the restaurant logo when available, otherwise falls back to the
 // restaurant name. Used in customer-facing headers in place of generic branding.
-export function BrandMark({ branding, size = 40, showName = true, className }: BrandMarkProps) {
-  const name = brandName(branding);
+export function BrandMark({ branding, size = 40, showName = true, displayName, className }: BrandMarkProps) {
+  const name = displayName || brandName(branding);
   const logo = branding?.logo;
 
   return (

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useCustomerStore } from "@/store/useCustomerStore";
 import { useBrandingStore } from "@/store/useBrandingStore";
+import { useLobbyStore } from "@/store/useLobbyStore";
 import { useBrandTheme } from "@/hooks/useBrandTheme";
 import { brandName, getTextDir } from "@/lib/branding";
 import { useLanguage } from "@/lib/i18n";
@@ -15,6 +16,7 @@ export default function TableSessionEntry() {
   const params = useParams();
   const tableToken = params?.tableToken as string;
   const setSession = useCustomerStore((state) => state.setSession);
+  const initLobby = useLobbyStore((state) => state.initFromSession);
   const setBranding = useBrandingStore((state) => state.setBranding);
   const clearBranding = useBrandingStore((state) => state.clearBranding);
   const { t, dir } = useLanguage();
@@ -44,7 +46,15 @@ export default function TableSessionEntry() {
       try {
         const data = await startTableSession(tableToken);
         if (cancelled) return;
-        setSession(data.session_token, data.expires_at);
+        setSession(data.session_token, data.expires_at, data.guest_token);
+        // Seed the shared-table lobby for this session. Solo entries stay solo;
+        // a second-or-later device arrives already in lobby mode.
+        initLobby({
+          sessionToken: data.session_token,
+          guestToken: data.guest_token,
+          mode: data.mode,
+          guestCount: data.guest_count,
+        });
         if (data.restaurant) {
           // Theme the loading screen with the real restaurant before /menu loads.
           setBranding(data.restaurant);
@@ -65,7 +75,7 @@ export default function TableSessionEntry() {
     return () => {
       cancelled = true;
     };
-  }, [tableToken, setSession, setBranding, clearBranding, router]);
+  }, [tableToken, setSession, initLobby, setBranding, clearBranding, router]);
 
   // Only trust the resolved branding when it matches the token we're scanning.
   const name = scan && scan.token === tableToken ? brandName(scan.restaurant) : null;

@@ -10,13 +10,16 @@ from apps.orders.staff_views import (
     PaymentCreateView,
     WaiterOrderServeView,
     WaiterTableListView,
+    WaiterTableRequestListView,
+    WaiterTableRequestResolveView,
 )
-from apps.orders.views import OrderCollectionView, OrderDetailView
+from apps.orders.views import OrderCollectionView, OrderDetailView, TableRequestCreateView
 
 
 urlpatterns = [
     path("orders/", OrderCollectionView.as_view(), name="order-collection"),
     path("orders/<str:order_token>/", OrderDetailView.as_view(), name="order-detail"),
+    path("table/requests/", TableRequestCreateView.as_view(), name="table-request-create"),
     path("kitchen/orders/", KitchenOrderListView.as_view(), name="kitchen-order-list"),
     path(
         "kitchen/orders/<str:order_token>/status/",
@@ -24,6 +27,12 @@ urlpatterns = [
         name="kitchen-order-status-update",
     ),
     path("waiter/tables/", WaiterTableListView.as_view(), name="waiter-table-list"),
+    path("waiter/requests/", WaiterTableRequestListView.as_view(), name="waiter-table-request-list"),
+    path(
+        "waiter/requests/<str:request_token>/resolve/",
+        WaiterTableRequestResolveView.as_view(),
+        name="waiter-table-request-resolve",
+    ),
     path(
         "waiter/orders/<str:order_token>/serve/",
         WaiterOrderServeView.as_view(),

@@ -64,6 +64,15 @@ class SessionOrdersConsumer(AsyncJsonWebsocketConsumer):
     async def order_updated(self, event):
         await self.send_json(event["payload"])
 
+    async def guest_joined(self, event):
+        await self.send_json(event["payload"])
+
+    async def guest_updated(self, event):
+        await self.send_json(event["payload"])
+
+    async def table_request_resolved(self, event):
+        await self.send_json(event["payload"])
+
     @database_sync_to_async
     def _get_valid_session(self, session_token):
         return get_valid_session_by_token(session_token=session_token)
@@ -103,6 +112,9 @@ class StaffUpdatesConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(event["payload"])
 
     async def order_updated(self, event):
+        await self.send_json(event["payload"])
+
+    async def table_request_created(self, event):
         await self.send_json(event["payload"])
 
     @database_sync_to_async

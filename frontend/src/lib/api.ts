@@ -1,3 +1,15 @@
+import {
+  normalizeCustomerTableRequest,
+  normalizeSessionTableRequestsResponse,
+  normalizeWaiterTableRequest,
+  normalizeWaiterTableRequestsResponse,
+  type CustomerTableRequest,
+  type SessionTableRequestsResponse,
+  type TableRequestType,
+  type WaiterTableRequest,
+  type WaiterTableRequestsResponse,
+} from './tableRequests';
+
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 export interface ApiErrorResponse {
@@ -22,11 +34,12 @@ export class ApiError extends Error {
 
 interface FetchOptions extends RequestInit {
   sessionToken?: string;
+  guestToken?: string;
   accessToken?: string;
 }
 
 export async function fetchApi<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
-  const { sessionToken, accessToken, ...customConfig } = options;
+  const { sessionToken, guestToken, accessToken, ...customConfig } = options;
   // For FormData bodies, let the browser set the multipart Content-Type (incl. boundary).
   const isFormData =
     typeof FormData !== 'undefined' && customConfig.body instanceof FormData;
@@ -37,6 +50,9 @@ export async function fetchApi<T>(endpoint: string, options: FetchOptions = {}):
 
   if (sessionToken) {
     headers['X-Session-Token'] = sessionToken;
+  }
+  if (guestToken) {
+    headers['X-Guest-Token'] = guestToken;
   }
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
@@ -77,8 +93,17 @@ export async function fetchApi<T>(endpoint: string, options: FetchOptions = {}):
 }
 
 // Session API methods
+
+// A table is `solo` while one device is connected and `lobby` once two or more
+// guests/devices share the session. Mode is derived by the backend from the
+// active guest count — the frontend never computes it independently.
+export type SessionMode = 'solo' | 'lobby';
+
 export interface SessionStartResponse {
   session_token: string;
+  guest_token: string;
+  mode: SessionMode;
+  guest_count: number;
   expires_at: string;
   restaurant: RestaurantBranding;
 }
@@ -87,6 +112,61 @@ export async function startTableSession(tableToken: string): Promise<SessionStar
   return fetchApi<SessionStartResponse>('/table/session/start/', {
     method: 'POST',
     body: JSON.stringify({ table_token: tableToken }),
+  });
+}
+
+// Update (or reset) the current guest's display name. Requires both the session
+// token and the guest token. Sending a blank name restores the backend default
+// ("Guest N"). Validation errors surface as ApiError(code="invalid_request").
+export interface GuestUpdateResponse {
+  guest_token: string;
+  display_name: string;
+  avatar_color: string;
+  mode: SessionMode;
+  guest_count: number;
+}
+
+export async function updateGuestDisplayName(
+  sessionToken: string,
+  guestToken: string,
+  displayName: string,
+): Promise<GuestUpdateResponse> {
+  return fetchApi<GuestUpdateResponse>('/table/session/guest/', {
+    method: 'PATCH',
+    sessionToken,
+    guestToken,
+    body: JSON.stringify({ display_name: displayName }),
+  });
+}
+
+// Public guest shape returned by the session roster. Public fields only — never
+// internal ids.
+export interface SessionRosterGuest {
+  guest_token: string;
+  display_name: string;
+  avatar_color: string;
+}
+
+// Authoritative roster of everyone currently at the table. Unlike realtime
+// events (which only describe deltas), this returns the full guest list and the
+// caller's own `current_guest`.
+export interface SessionRosterResponse {
+  mode: SessionMode;
+  guest_count: number;
+  current_guest: SessionRosterGuest;
+  guests: SessionRosterGuest[];
+}
+
+// Requires BOTH the session token and the guest token. Errors:
+//   invalid_session (401) / expired_session (403) / invalid_guest (401).
+export async function getSessionRoster(
+  sessionToken: string,
+  guestToken: string,
+): Promise<SessionRosterResponse> {
+  return fetchApi<SessionRosterResponse>('/table/session/', {
+    method: 'GET',
+    sessionToken,
+    guestToken,
   });
 }
 
@@ -154,16 +234,55 @@ export interface OrderDetailItem {
   notes: string;
 }
 
+// Public guest attribution attached to an order. Always nullable: orders created
+// without a guest token (e.g. solo flow) return `guest: null`. Contains only
+// public, customer-safe fields — never internal ids.
+export interface OrderGuest {
+  guest_token: string;
+  display_name: string;
+  avatar_color: string;
+}
+
 export interface OrderDetailsResponse extends OrderResponse {
   created_at: string;
   items: OrderDetailItem[];
+  guest: OrderGuest | null;
 }
 
-export async function createOrder(sessionToken: string, payload: CreateOrderPayload): Promise<OrderResponse> {
+// Read-only summary returned by GET /orders/ (all orders for the session).
+// Note: the backend does NOT attribute orders to a guest in this payload, so
+// the frontend can only mark which orders THIS device created (see lobby store).
+export interface OrderSummary {
+  order_id: string;
+  status: string;
+  total_price: string;
+  created_at: string;
+  guest: OrderGuest | null;
+}
+
+export interface SessionOrdersResponse {
+  orders: OrderSummary[];
+}
+
+// `guestToken` is optional: when present and valid the backend associates the
+// order with that guest. When absent the order is created without a guest.
+export async function createOrder(
+  sessionToken: string,
+  payload: CreateOrderPayload,
+  guestToken?: string,
+): Promise<OrderResponse> {
   return fetchApi<OrderResponse>('/orders/', {
     method: 'POST',
     sessionToken,
+    guestToken,
     body: JSON.stringify(payload),
+  });
+}
+
+export async function getSessionOrders(sessionToken: string): Promise<SessionOrdersResponse> {
+  return fetchApi<SessionOrdersResponse>('/orders/', {
+    method: 'GET',
+    sessionToken,
   });
 }
 
@@ -172,6 +291,35 @@ export async function getOrder(sessionToken: string, orderId: string): Promise<O
     method: 'GET',
     sessionToken,
   });
+}
+
+export async function getTableRequests(sessionToken: string): Promise<SessionTableRequestsResponse> {
+  const raw = await fetchApi<unknown>('/table/requests/', {
+    method: 'GET',
+    sessionToken,
+  });
+  return normalizeSessionTableRequestsResponse(raw);
+}
+
+export async function createTableRequest(
+  sessionToken: string,
+  type: TableRequestType,
+  guestToken?: string | null,
+): Promise<CustomerTableRequest> {
+  const raw = await fetchApi<unknown>('/table/requests/', {
+    method: 'POST',
+    sessionToken,
+    guestToken: guestToken ?? undefined,
+    body: JSON.stringify({ type }),
+  });
+  const normalized = normalizeCustomerTableRequest(raw);
+  if (!normalized) {
+    throw new ApiError(502, {
+      code: 'invalid_response',
+      message: 'invalid server response',
+    });
+  }
+  return normalized;
 }
 
 // Staff Authentication API
@@ -202,6 +350,8 @@ export interface KitchenOrderSummary {
   status: string;
   created_at: string;
   items: OrderDetailItem[];
+  // Nullable guest attribution. `null` for table-level / un-attributed orders.
+  guest: OrderGuest | null;
 }
 
 export interface KitchenOrdersResponse {
@@ -234,6 +384,8 @@ export interface WaiterTableOrder {
   total_price: string;
   created_at: string;
   payment_status: string | null;
+  // Nullable guest attribution. `null` for table-level / un-attributed orders.
+  guest: OrderGuest | null;
 }
 
 export interface WaiterTableSummary {
@@ -260,6 +412,32 @@ export async function serveWaiterOrder(accessToken: string, orderId: string): Pr
     method: 'PATCH',
     accessToken,
   });
+}
+
+export async function getWaiterRequests(accessToken: string): Promise<WaiterTableRequestsResponse> {
+  const raw = await fetchApi<unknown>('/waiter/requests/', {
+    method: 'GET',
+    accessToken,
+  });
+  return normalizeWaiterTableRequestsResponse(raw);
+}
+
+export async function resolveWaiterRequest(
+  accessToken: string,
+  requestToken: string,
+): Promise<WaiterTableRequest> {
+  const raw = await fetchApi<unknown>(`/waiter/requests/${requestToken}/resolve/`, {
+    method: 'PATCH',
+    accessToken,
+  });
+  const normalized = normalizeWaiterTableRequest(raw);
+  if (!normalized) {
+    throw new ApiError(502, {
+      code: 'invalid_response',
+      message: 'invalid server response',
+    });
+  }
+  return normalized;
 }
 
 // Payment API Method
@@ -289,6 +467,8 @@ export interface CashierTableSummary {
   order_id: string | null;
   total_price: string | null;
   payment_status: string | null;
+  // Nullable guest attribution for the table's active order.
+  guest: OrderGuest | null;
 }
 
 export interface CashierTableOrderDetail extends CashierTableSummary {
@@ -578,6 +758,8 @@ export interface AdminOrder {
   total_price: string;
   payment_status: string | null;
   created_at: string;
+  // Nullable guest attribution. `null` for table-level / un-attributed orders.
+  guest: OrderGuest | null;
 }
 
 export interface AdminOrdersResponse {

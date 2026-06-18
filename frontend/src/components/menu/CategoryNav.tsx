@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { MenuCategory } from "@/lib/api";
 import { getTextDir } from "@/lib/branding";
+import { useLanguage } from "@/lib/i18n";
+import { localizeMenuName } from "@/lib/menuTranslations";
 
 interface CategoryNavProps {
   categories: MenuCategory[];
@@ -10,6 +12,7 @@ interface CategoryNavProps {
 
 export function CategoryNav({ categories }: CategoryNavProps) {
   const [activeCategory, setActiveCategory] = useState<number>(categories[0]?.id || 0);
+  const { language } = useLanguage();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -49,11 +52,12 @@ export function CategoryNav({ categories }: CategoryNavProps) {
         <ul className="flex overflow-x-auto snap-x snap-mandatory py-4 px-4 gap-3 whitespace-nowrap [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {categories.map((cat) => {
             const isActive = activeCategory === cat.id;
+            const categoryName = localizeMenuName(cat.name, language);
             return (
               <li key={cat.id} className="snap-start shrink-0">
                 <button
                   type="button"
-                  dir={getTextDir(cat.name)}
+                  dir={getTextDir(categoryName)}
                   onClick={() => scrollToCategory(cat.id)}
                   style={
                     isActive
@@ -66,7 +70,7 @@ export function CategoryNav({ categories }: CategoryNavProps) {
                       : "bg-white hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900"
                   }`}
                 >
-                  {cat.name}
+                  {categoryName}
                 </button>
               </li>
             );

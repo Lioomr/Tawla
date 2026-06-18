@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useStaffStore } from '@/store/useStaffStore';
 import { API_BASE_URL } from '@/lib/api';
+import { normalizeTableRequestCreatedEvent } from '@/lib/tableRequests';
 
 export function useWaiterWebSocket() {
   const profile = useStaffStore((state) => state.profile);
@@ -24,6 +25,11 @@ export function useWaiterWebSocket() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
+      ws.onopen = () => {
+        queryClient.invalidateQueries({ queryKey: ['waiter', 'tables'] });
+        queryClient.invalidateQueries({ queryKey: ['waiter', 'requests'] });
+      };
+
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -31,6 +37,11 @@ export function useWaiterWebSocket() {
           if (data.type === 'order_created' || data.type === 'order_updated') {
             // Refetch Waiter Tables if any order happens to change
             queryClient.invalidateQueries({ queryKey: ['waiter', 'tables'] });
+            return;
+          }
+
+          if (data.type === 'table_request_created' && normalizeTableRequestCreatedEvent(data)) {
+            queryClient.invalidateQueries({ queryKey: ['waiter', 'requests'] });
           }
         } catch (e) {
           console.error('Waiter WebSocket parsing error:', e);

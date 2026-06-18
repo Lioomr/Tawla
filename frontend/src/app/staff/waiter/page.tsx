@@ -3,12 +3,48 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ApiError, getWaiterTables, serveWaiterOrder, recordPayment } from '@/lib/api';
+import {
+  ApiError,
+  getWaiterRequests,
+  getWaiterTables,
+  recordPayment,
+  resolveWaiterRequest,
+  serveWaiterOrder,
+} from '@/lib/api';
 import { useStaffStore } from '@/store/useStaffStore';
 import { useWaiterWebSocket } from '@/hooks/useWaiterWebSocket';
-import { Loader2, LogOut, CheckCircle, CreditCard, Banknote, Clock, UtensilsCrossed } from 'lucide-react';
+import {
+  Banknote,
+  BellRing,
+  CheckCircle,
+  Clock,
+  CreditCard,
+  HandHelping,
+  Loader2,
+  LogOut,
+  ReceiptText,
+  UtensilsCrossed,
+} from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+  TABLE_REQUEST_LABEL,
+  tableRequestAgeLabel,
+  type TableRequestType,
+  type WaiterTableRequest,
+} from '@/lib/tableRequests';
+
+const REQUEST_ICON: Record<TableRequestType, typeof BellRing> = {
+  CALL_WAITER: BellRing,
+  REQUEST_BILL: ReceiptText,
+  NEED_HELP: HandHelping,
+};
+
+const REQUEST_STYLE: Record<TableRequestType, string> = {
+  CALL_WAITER: 'bg-blue-50 text-blue-700 border-blue-200',
+  REQUEST_BILL: 'bg-amber-50 text-amber-700 border-amber-200',
+  NEED_HELP: 'bg-rose-50 text-rose-700 border-rose-200',
+};
 
 export default function WaiterDashboard() {
   const router = useRouter();
@@ -34,6 +70,16 @@ export default function WaiterDashboard() {
     },
     enabled: !!accessToken && profile?.role === 'WAITER',
     refetchInterval: 15000, 
+  });
+
+  const { data: requestData, isLoading: requestsLoading } = useQuery({
+    queryKey: ['waiter', 'requests'],
+    queryFn: async () => {
+      if (!accessToken) throw new Error('Not authenticated');
+      return getWaiterRequests(accessToken);
+    },
+    enabled: !!accessToken && profile?.role === 'WAITER',
+    refetchInterval: 15000,
   });
 
   const serveMutation = useMutation({
@@ -66,6 +112,20 @@ export default function WaiterDashboard() {
     }
   });
 
+  const resolveRequestMutation = useMutation({
+    mutationFn: ({ requestToken }: { requestToken: string }) => {
+      if (!accessToken) throw new Error('Not authenticated');
+      return resolveWaiterRequest(accessToken, requestToken);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['waiter', 'requests'] });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof ApiError || err instanceof Error ? err.message : 'Unknown error';
+      alert(`Error resolving request: ${message}`);
+    },
+  });
+
   if (!isAuthenticated() || profile?.role !== 'WAITER') return null;
 
   const handleLogout = () => {
@@ -80,6 +140,12 @@ export default function WaiterDashboard() {
   const handlePayment = (orderId: string, method: string) => {
     paymentMutation.mutate({ orderId, method });
   };
+
+  const handleResolveRequest = (requestToken: string) => {
+    resolveRequestMutation.mutate({ requestToken });
+  };
+
+  const requests = requestData?.requests ?? [];
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-950 font-sans">
@@ -106,6 +172,13 @@ export default function WaiterDashboard() {
 
       {/* Main Board */}
       <main className="p-6 max-w-7xl mx-auto">
+        <TableRequestAlerts
+          requests={requests}
+          isLoading={requestsLoading}
+          resolvingToken={resolveRequestMutation.isPending ? resolveRequestMutation.variables?.requestToken ?? null : null}
+          onResolve={handleResolveRequest}
+        />
+
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-10 h-10 animate-spin text-zinc-400" />
@@ -274,5 +347,84 @@ export default function WaiterDashboard() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+interface TableRequestAlertsProps {
+  requests: WaiterTableRequest[];
+  isLoading: boolean;
+  resolvingToken: string | null;
+  onResolve: (requestToken: string) => void;
+}
+
+function TableRequestAlerts({ requests, isLoading, resolvingToken, onResolve }: TableRequestAlertsProps) {
+  if (isLoading && requests.length === 0) {
+    return (
+      <section className="mb-5 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-black tracking-tight text-zinc-500">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading service requests
+        </div>
+      </section>
+    );
+  }
+
+  if (requests.length === 0) return null;
+
+  return (
+    <section className="mb-5 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <p className="text-xs font-black tracking-widest text-zinc-400 uppercase">Service requests</p>
+          <h2 className="text-lg font-black tracking-tight text-zinc-950">
+            {requests.length} open {requests.length === 1 ? 'request' : 'requests'}
+          </h2>
+        </div>
+        <span className="rounded-full bg-zinc-950 px-3 py-1 text-xs font-black tracking-widest text-white">
+          Live
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[260px] overflow-y-auto pr-1">
+        {requests.map((request) => {
+          const Icon = REQUEST_ICON[request.type];
+          const isResolving = resolvingToken === request.request_token;
+          return (
+            <article
+              key={request.request_token}
+              className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3"
+            >
+              <div className={`shrink-0 rounded-lg border p-2 ${REQUEST_STYLE[request.type]}`}>
+                <Icon className="w-4 h-4" />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-black tracking-tight text-zinc-950">
+                    {request.table}
+                  </p>
+                  <span className="shrink-0 text-[10px] font-black tracking-widest uppercase text-zinc-400">
+                    {tableRequestAgeLabel(request.created_at)}
+                  </span>
+                </div>
+                <p className="truncate text-xs font-bold text-zinc-600">
+                  {TABLE_REQUEST_LABEL[request.type]}
+                  {request.guest ? ` - ${request.guest.display_name}` : ''}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onResolve(request.request_token)}
+                disabled={isResolving}
+                className="shrink-0 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-black tracking-tight text-white transition-colors hover:bg-emerald-600 active:bg-emerald-700 disabled:opacity-60"
+              >
+                {isResolving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Resolve'}
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }

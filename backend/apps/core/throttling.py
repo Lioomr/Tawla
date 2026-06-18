@@ -36,6 +36,14 @@ class OrderCreateRateThrottle(SessionTokenRateThrottle):
         return self.rate or os.getenv("RATE_LIMIT_ORDER_CREATE", "10/minute")
 
 
+class TableRequestCreateRateThrottle(SessionTokenRateThrottle):
+    scope = "table_request_create"
+    rate = None
+
+    def get_rate(self):
+        return self.rate or os.getenv("RATE_LIMIT_TABLE_REQUEST_CREATE", "10/minute")
+
+
 class PaymentCreateRateThrottle(SimpleRateThrottle):
     scope = "payment_create"
     session_header = "HTTP_X_SESSION_TOKEN"

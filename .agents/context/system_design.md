@@ -33,6 +33,7 @@ Backend MVP is implemented for:
 * Waiter serve flow
 * Payment creation
 * Cashier table status and active order detail APIs
+* Customer table requests with waiter/admin resolution
 * Admin menu, table, staff, orders, analytics, and audit log APIs
 * WebSocket order events
 * Rate limiting
@@ -125,7 +126,7 @@ Production upgrade path:
 
 1. Customer scans QR or taps NFC
 2. Backend validates table public token
-3. Backend creates secure table session
+3. Backend creates a secure table session, or joins the existing active session for that table
 4. Customer loads menu using session token
 5. Customer creates order
 6. Backend validates session, items, availability, and pricing
@@ -145,12 +146,18 @@ Responsibilities:
 
 * Secure table lookup using `public_token`
 * Temporary customer session creation using `session_token`
+* Shared table guest/device tracking using `guest_token`
 * Session expiry enforcement
 
 Rules:
 
 * Internal `table_id` is never exposed
+* Internal `table_session.id` and `session_guest.id` are never exposed
 * Session duration is currently 60 minutes
+* First device on a table gets a frictionless `solo` session response and enters the menu directly
+* Later devices scanning the same table while a session is active join that session and activate `lobby` mode
+* Lobby mode is derived from active guest/device count: `solo` for 1 guest and `lobby` for 2 or more guests
+* Guest display names default to `Guest 1`, `Guest 2`, etc. and can be updated with validation
 
 ### 2. Menu Module
 
@@ -191,6 +198,7 @@ Rules:
 * Waiter and admin users may move orders to `SERVED` using the serve flow
 * `SERVED` and `CANCELLED` are terminal states
 * Invalid transitions must be rejected
+* Customer-created orders may be associated with a session guest when a valid `guest_token` is provided
 
 ### 4. Kitchen Module
 
@@ -205,8 +213,20 @@ Responsibilities:
 Responsibilities:
 
 * Track active tables
+* Track open customer table requests
+* Resolve customer table requests
 * Mark orders served
 * Record payment
+
+Table request rules:
+
+* Customer table requests are created only from valid active table sessions
+* Customers may list requests for their current active session as a REST resync fallback
+* Supported request types are `CALL_WAITER`, `REQUEST_BILL`, and `NEED_HELP`
+* Request state is `OPEN` or `RESOLVED`
+* Waiters and admins may resolve requests for their own restaurant only
+* Resolution is audit logged
+* Internal table request IDs are never exposed; APIs and events use `request_token`
 
 ### 6. Payment Module
 
@@ -339,6 +359,10 @@ Current events:
 
 * `order_created`
 * `order_updated`
+* `guest_joined`
+* `guest_updated`
+* `table_request_created`
+* `table_request_resolved`
 
 ---
 

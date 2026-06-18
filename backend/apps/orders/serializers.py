@@ -1,6 +1,15 @@
 from rest_framework import serializers
 
-from apps.orders.models import Order, OrderItem, Payment, PaymentMethod, PaymentStatus
+from apps.orders.models import (
+    Order,
+    OrderItem,
+    Payment,
+    PaymentMethod,
+    PaymentStatus,
+    TableRequest,
+    TableRequestType,
+)
+from apps.sessions.models import SessionGuest
 
 
 class OrderItemRequestSerializer(serializers.Serializer):
@@ -19,6 +28,12 @@ class OrderCreateResponseSerializer(serializers.Serializer):
     total_price = serializers.DecimalField(max_digits=10, decimal_places=2)
 
 
+class OrderGuestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SessionGuest
+        fields = ["guest_token", "display_name", "avatar_color"]
+
+
 class OrderItemResponseSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="menu_item.name")
 
@@ -29,19 +44,21 @@ class OrderItemResponseSerializer(serializers.ModelSerializer):
 
 class OrderSummarySerializer(serializers.ModelSerializer):
     order_id = serializers.CharField(source="public_token")
+    guest = OrderGuestSerializer(read_only=True)
 
     class Meta:
         model = Order
-        fields = ["order_id", "status", "total_price", "created_at"]
+        fields = ["order_id", "status", "total_price", "created_at", "guest"]
 
 
 class OrderDetailSerializer(serializers.ModelSerializer):
     order_id = serializers.CharField(source="public_token")
     items = OrderItemResponseSerializer(many=True)
+    guest = OrderGuestSerializer(read_only=True)
 
     class Meta:
         model = Order
-        fields = ["order_id", "status", "total_price", "created_at", "items"]
+        fields = ["order_id", "status", "total_price", "created_at", "items", "guest"]
 
 
 class PaymentCreateRequestSerializer(serializers.Serializer):
@@ -75,3 +92,30 @@ class OrderWithPaymentSerializer(OrderDetailSerializer):
             "amount": str(payment.amount),
             "created_at": payment.created_at,
         }
+
+
+class TableRequestCreateRequestSerializer(serializers.Serializer):
+    type = serializers.ChoiceField(choices=TableRequestType.choices)
+
+
+class TableRequestSerializer(serializers.ModelSerializer):
+    type = serializers.CharField(source="request_type")
+
+    class Meta:
+        model = TableRequest
+        fields = ["request_token", "type", "status", "created_at"]
+
+
+class CustomerTableRequestSerializer(serializers.ModelSerializer):
+    guest = OrderGuestSerializer(read_only=True)
+
+    class Meta:
+        model = TableRequest
+        fields = [
+            "request_token",
+            "request_type",
+            "status",
+            "created_at",
+            "resolved_at",
+            "guest",
+        ]

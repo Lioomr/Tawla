@@ -5,6 +5,7 @@ import { useCartStore } from "@/store/useCartStore";
 import { getTextDir } from "@/lib/branding";
 import { useLanguage } from "@/lib/i18n";
 import { formatPrice } from "@/lib/format";
+import { localizeMenuDescription, localizeMenuName } from "@/lib/menuTranslations";
 import { AnimatePresence, motion } from "framer-motion";
 
 interface MenuItemCardProps {
@@ -14,7 +15,9 @@ interface MenuItemCardProps {
 export function MenuItemCard({ item }: MenuItemCardProps) {
   const isAvailable = item.is_available;
   const addItem = useCartStore((state) => state.addItem);
-  const { t, dir } = useLanguage();
+  const { t, dir, language } = useLanguage();
+  const itemName = localizeMenuName(item.name, language);
+  const itemDescription = localizeMenuDescription(item.description, language);
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [quantity, setQuantity] = useState(1);
@@ -45,14 +48,14 @@ export function MenuItemCard({ item }: MenuItemCardProps) {
           <button
             type="button"
             onClick={() => setPreviewOpen(true)}
-            aria-label={t("viewImage", { name: item.name })}
+            aria-label={t("viewImage", { name: itemName })}
             className="relative block mx-auto aspect-square w-full max-w-[260px] appearance-none p-0 overflow-hidden rounded-xl bg-white dark:bg-zinc-950 cursor-zoom-in"
             style={{ boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--brand-accent) 45%, transparent)" }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={item.image}
-              alt={item.name}
+              alt={itemName}
               loading="lazy"
               decoding="async"
               className="h-full w-full object-contain p-2"
@@ -69,17 +72,17 @@ export function MenuItemCard({ item }: MenuItemCardProps) {
       <div className="p-4 flex justify-between gap-4">
         <div className="flex flex-col flex-1 pe-2">
           <h3
-            dir={getTextDir(item.name)}
+            dir={getTextDir(itemName)}
             className="font-extrabold text-lg text-zinc-900 dark:text-zinc-100 tracking-tight text-start"
           >
-            {item.name}
+            {itemName}
           </h3>
-          {item.description && (
+          {itemDescription && (
             <p
-              dir={getTextDir(item.description)}
+              dir={getTextDir(itemDescription)}
               className="text-zinc-500 dark:text-zinc-400 text-sm mt-1 line-clamp-2 leading-relaxed text-start"
             >
-              {item.description}
+              {itemDescription}
             </p>
           )}
           <div
@@ -183,7 +186,7 @@ export function MenuItemCard({ item }: MenuItemCardProps) {
             onClick={() => setPreviewOpen(false)}
             role="dialog"
             aria-modal="true"
-            aria-label={item.name}
+            aria-label={itemName}
             className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
           >
             <motion.div
@@ -207,7 +210,7 @@ export function MenuItemCard({ item }: MenuItemCardProps) {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={item.image}
-                  alt={item.name}
+                  alt={itemName}
                   decoding="async"
                   className="w-full max-h-[70vh] object-contain p-4"
                 />
@@ -215,10 +218,10 @@ export function MenuItemCard({ item }: MenuItemCardProps) {
 
               <div className="px-5 pb-5 pt-1">
                 <h3
-                  dir={getTextDir(item.name)}
+                  dir={getTextDir(itemName)}
                   className="text-xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-100 text-start"
                 >
-                  {item.name}
+                  {itemName}
                 </h3>
                 <div
                   className="mt-1 font-extrabold text-base text-start"

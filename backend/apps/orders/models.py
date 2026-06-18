@@ -4,12 +4,16 @@ from django.db import models
 
 from apps.core.models import TimeStampedModel
 from apps.menu.models import MenuItem
-from apps.restaurants.models import Restaurant, Table
-from apps.sessions.models import TableSession
+from apps.restaurants.models import Restaurant, Staff, Table
+from apps.sessions.models import SessionGuest, TableSession
 
 
 def generate_order_public_token() -> str:
     return f"ord_{secrets.token_urlsafe(12)}"
+
+
+def generate_table_request_token() -> str:
+    return f"treq_{secrets.token_urlsafe(12)}"
 
 
 class OrderStatus(models.TextChoices):
@@ -29,6 +33,17 @@ class PaymentStatus(models.TextChoices):
     PENDING = "PENDING", "Pending"
     PAID = "PAID", "Paid"
     FAILED = "FAILED", "Failed"
+
+
+class TableRequestType(models.TextChoices):
+    CALL_WAITER = "CALL_WAITER", "Call waiter"
+    REQUEST_BILL = "REQUEST_BILL", "Request bill"
+    NEED_HELP = "NEED_HELP", "Need help"
+
+
+class TableRequestStatus(models.TextChoices):
+    OPEN = "OPEN", "Open"
+    RESOLVED = "RESOLVED", "Resolved"
 
 
 class Order(TimeStampedModel):
@@ -51,6 +66,13 @@ class Order(TimeStampedModel):
         TableSession,
         on_delete=models.PROTECT,
         related_name="orders",
+    )
+    guest = models.ForeignKey(
+        SessionGuest,
+        on_delete=models.PROTECT,
+        related_name="orders",
+        null=True,
+        blank=True,
     )
     status = models.CharField(
         max_length=20,
@@ -115,3 +137,59 @@ class Payment(models.Model):
 
     def __str__(self) -> str:
         return f"Payment for order {self.order_id}"
+
+
+class TableRequest(TimeStampedModel):
+    request_token = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        default=generate_table_request_token,
+    )
+    restaurant = models.ForeignKey(
+        Restaurant,
+        on_delete=models.PROTECT,
+        related_name="table_requests",
+    )
+    table = models.ForeignKey(
+        Table,
+        on_delete=models.PROTECT,
+        related_name="table_requests",
+    )
+    session = models.ForeignKey(
+        TableSession,
+        on_delete=models.PROTECT,
+        related_name="table_requests",
+    )
+    guest = models.ForeignKey(
+        SessionGuest,
+        on_delete=models.PROTECT,
+        related_name="table_requests",
+        null=True,
+        blank=True,
+    )
+    request_type = models.CharField(max_length=20, choices=TableRequestType.choices)
+    status = models.CharField(
+        max_length=20,
+        choices=TableRequestStatus.choices,
+        default=TableRequestStatus.OPEN,
+        db_index=True,
+    )
+    resolved_by = models.ForeignKey(
+        Staff,
+        on_delete=models.PROTECT,
+        related_name="resolved_table_requests",
+        null=True,
+        blank=True,
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["restaurant", "status"]),
+            models.Index(fields=["session", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.request_token

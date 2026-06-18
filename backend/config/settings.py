@@ -62,6 +62,7 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
+    "x-guest-token",
     "x-session-token",
 ]
 
@@ -147,6 +148,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "staff_login": os.getenv("RATE_LIMIT_STAFF_LOGIN", "5/minute"),
         "order_create": os.getenv("RATE_LIMIT_ORDER_CREATE", "10/minute"),
+        "table_request_create": os.getenv("RATE_LIMIT_TABLE_REQUEST_CREATE", "10/minute"),
         "payment_create": os.getenv("RATE_LIMIT_PAYMENT_CREATE", "5/minute"),
     },
 }

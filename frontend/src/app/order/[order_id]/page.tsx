@@ -11,6 +11,7 @@ import { useBrandTheme, useHydratedBranding } from '@/hooks/useBrandTheme';
 import { brandName, getTextDir } from '@/lib/branding';
 import { useLanguage } from '@/lib/i18n';
 import { formatPrice } from '@/lib/format';
+import { localizeMenuName } from '@/lib/menuTranslations';
 import type { TranslationKey } from '@/lib/i18n';
 
 const STATUS_STEPS: { id: string; icon: typeof CheckCircle2; titleKey: TranslationKey; descKey: TranslationKey }[] = [
@@ -27,7 +28,7 @@ export default function OrderStatusPage() {
 
   const { isValid } = useCustomerStore();
   const branding = useHydratedBranding();
-  const { t, dir } = useLanguage();
+  const { t, dir, language } = useLanguage();
 
   // Apply persisted restaurant branding for visual continuity from the menu.
   useBrandTheme();
@@ -188,7 +189,7 @@ export default function OrderStatusPage() {
                 <div className="flex gap-3">
                   <span className="font-bold text-zinc-900">{item.quantity}×</span>
                   <div className="flex flex-col">
-                    <span dir={getTextDir(item.name)} className="font-medium text-zinc-900 text-start">{item.name}</span>
+                    <span dir={getTextDir(localizeMenuName(item.name, language))} className="font-medium text-zinc-900 text-start">{localizeMenuName(item.name, language)}</span>
                     {item.notes && <span dir={getTextDir(item.notes)} className="text-sm font-medium text-zinc-500 line-clamp-2 text-start">{item.notes}</span>}
                   </div>
                 </div>

@@ -11,9 +11,18 @@ from rest_framework.test import APITestCase
 from apps.core.models import AuditLog
 from apps.core.throttling import OrderCreateRateThrottle, PaymentCreateRateThrottle
 from apps.menu.models import Category, MenuItem
-from apps.orders.models import Order, OrderItem, OrderStatus, Payment, PaymentStatus
+from apps.orders.models import (
+    Order,
+    OrderItem,
+    OrderStatus,
+    Payment,
+    PaymentStatus,
+    TableRequest,
+    TableRequestStatus,
+    TableRequestType,
+)
 from apps.restaurants.models import Restaurant, Staff, StaffRole, Table
-from apps.sessions.models import TableSession
+from apps.sessions.models import SessionGuest, TableSession
 
 User = get_user_model()
 
@@ -22,6 +31,17 @@ def assert_error_payload(testcase, response, *, code, message):
     testcase.assertEqual(
         response.data,
         {"error": {"code": code, "message": message}},
+    )
+
+
+def assert_guest_payload(testcase, payload, guest):
+    testcase.assertEqual(
+        payload,
+        {
+            "guest_token": guest.guest_token,
+            "display_name": guest.display_name,
+            "avatar_color": guest.avatar_color,
+        },
     )
 
 
@@ -38,6 +58,12 @@ class OrderCreateApiTests(APITestCase):
             table=self.table,
             session_token="sess_order_123",
             expires_at=timezone.now() + timedelta(hours=2),
+        )
+        self.guest = SessionGuest.objects.create(
+            session=self.session,
+            guest_token="guest_order_existing",
+            display_name="Guest Existing",
+            avatar_color="#2563EB",
         )
         drinks = Category.objects.create(restaurant=restaurant, name="Drinks")
         meals = Category.objects.create(restaurant=restaurant, name="Meals")
@@ -75,6 +101,7 @@ class OrderCreateApiTests(APITestCase):
             restaurant=restaurant,
             table=self.table,
             session=self.session,
+            guest=self.guest,
             total_price=Decimal("40.00"),
         )
         OrderItem.objects.create(
@@ -130,6 +157,44 @@ class OrderCreateApiTests(APITestCase):
             Decimal("20.00"),
         )
 
+    def test_create_order_can_be_associated_with_guest_token(self):
+        fresh_session = self.create_fresh_session()
+        guest = SessionGuest.objects.create(
+            session=fresh_session,
+            guest_token="guest_order_token_123",
+            display_name="Guest 1",
+        )
+
+        response = self.client.post(
+            "/api/v1/orders/",
+            {"items": [{"menu_item_id": self.cola.id, "quantity": 1}]},
+            format="json",
+            HTTP_X_SESSION_TOKEN=fresh_session.session_token,
+            HTTP_X_GUEST_TOKEN=guest.guest_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        order = Order.objects.get(public_token=response.data["order_id"])
+        self.assertEqual(order.guest_id, guest.id)
+        self.assertNotIn("id", response.data)
+        self.assertNotIn("order_pk", response.data)
+        self.assertNotIn("guest_id", response.data)
+        self.assertNotIn("session_id", response.data)
+
+    def test_create_order_rejects_invalid_guest_token(self):
+        fresh_session = self.create_fresh_session()
+
+        response = self.client.post(
+            "/api/v1/orders/",
+            {"items": [{"menu_item_id": self.cola.id, "quantity": 1}]},
+            format="json",
+            HTTP_X_SESSION_TOKEN=fresh_session.session_token,
+            HTTP_X_GUEST_TOKEN="guest_missing",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        assert_error_payload(self, response, code="invalid_guest", message="invalid guest")
+
     def test_create_order_rejects_invalid_session(self):
         response = self.client.post(
             "/api/v1/orders/",
@@ -182,7 +247,14 @@ class OrderCreateApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["orders"]), 1)
         self.assertEqual(response.data["orders"][0]["order_id"], self.order.public_token)
+        assert_guest_payload(self, response.data["orders"][0]["guest"], self.guest)
         self.assertNotIn("id", response.data["orders"][0])
+        self.assertNotIn("guest_id", response.data["orders"][0])
+        self.assertNotIn("session_id", response.data["orders"][0])
+        self.assertNotIn("table_id", response.data["orders"][0])
+        self.assertNotIn("id", response.data["orders"][0]["guest"])
+        self.assertNotIn("guest_id", response.data["orders"][0]["guest"])
+        self.assertNotIn("session_id", response.data["orders"][0]["guest"])
 
     def test_get_order_detail_returns_public_order_token_and_items(self):
         response = self.client.get(
@@ -194,6 +266,43 @@ class OrderCreateApiTests(APITestCase):
         self.assertEqual(response.data["order_id"], self.order.public_token)
         self.assertEqual(response.data["items"][0]["name"], "Cola")
         self.assertEqual(response.data["items"][0]["quantity"], 2)
+        assert_guest_payload(self, response.data["guest"], self.guest)
+        self.assertNotIn("id", response.data)
+        self.assertNotIn("guest_id", response.data)
+        self.assertNotIn("session_id", response.data)
+        self.assertNotIn("table_id", response.data)
+        self.assertNotIn("id", response.data["guest"])
+        self.assertNotIn("guest_id", response.data["guest"])
+        self.assertNotIn("session_id", response.data["guest"])
+
+    def test_order_responses_return_null_guest_when_order_has_no_guest(self):
+        null_guest_session = self.create_fresh_session()
+        null_guest_order = Order.objects.create(
+            restaurant=self.table.restaurant,
+            table=self.table,
+            session=null_guest_session,
+            total_price=Decimal("20.00"),
+        )
+        OrderItem.objects.create(
+            order=null_guest_order,
+            menu_item=self.cola,
+            quantity=1,
+            price_at_time=Decimal("20.00"),
+        )
+
+        list_response = self.client.get(
+            "/api/v1/orders/",
+            HTTP_X_SESSION_TOKEN=null_guest_session.session_token,
+        )
+        detail_response = self.client.get(
+            f"/api/v1/orders/{null_guest_order.public_token}/",
+            HTTP_X_SESSION_TOKEN=null_guest_session.session_token,
+        )
+
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(list_response.data["orders"][0]["guest"], None)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data["guest"], None)
 
     def test_get_order_detail_rejects_cross_session_access(self):
         response = self.client.get(
@@ -240,6 +349,12 @@ class KitchenOrderApiTests(APITestCase):
             session_token="sess_kitchen_123",
             expires_at=timezone.now() + timedelta(hours=2),
         )
+        self.guest = SessionGuest.objects.create(
+            session=self.session,
+            guest_token="guest_kitchen_123",
+            display_name="Kitchen Guest",
+            avatar_color="#DC2626",
+        )
         category = Category.objects.create(restaurant=self.restaurant, name="Meals")
         item = MenuItem.objects.create(
             restaurant=self.restaurant,
@@ -252,6 +367,7 @@ class KitchenOrderApiTests(APITestCase):
             restaurant=self.restaurant,
             table=self.table,
             session=self.session,
+            guest=self.guest,
             total_price=Decimal("60.00"),
         )
         OrderItem.objects.create(
@@ -295,6 +411,11 @@ class KitchenOrderApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["orders"]), 1)
         self.assertEqual(response.data["orders"][0]["order_id"], self.order.public_token)
+        assert_guest_payload(self, response.data["orders"][0]["guest"], self.guest)
+        self.assertNotIn("id", response.data["orders"][0])
+        self.assertNotIn("guest_id", response.data["orders"][0])
+        self.assertNotIn("session_id", response.data["orders"][0])
+        self.assertNotIn("table_id", response.data["orders"][0])
 
     def test_waiter_cannot_access_kitchen_endpoints(self):
         response = self.client.get(
@@ -316,6 +437,11 @@ class KitchenOrderApiTests(APITestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, "PREPARING")
         self.assertEqual(response.data["order_id"], self.order.public_token)
+        assert_guest_payload(self, response.data["guest"], self.guest)
+        self.assertNotIn("id", response.data)
+        self.assertNotIn("guest_id", response.data)
+        self.assertNotIn("session_id", response.data)
+        self.assertNotIn("table_id", response.data)
         self.assertTrue(
             AuditLog.objects.filter(
                 restaurant=self.restaurant,
@@ -367,6 +493,12 @@ class WaiterAndPaymentApiTests(APITestCase):
             session_token="sess_waiter_123",
             expires_at=timezone.now() + timedelta(hours=2),
         )
+        self.guest = SessionGuest.objects.create(
+            session=self.session,
+            guest_token="guest_waiter_123",
+            display_name="Waiter Guest",
+            avatar_color="#16A34A",
+        )
         category = Category.objects.create(restaurant=self.restaurant, name="Meals")
         item = MenuItem.objects.create(
             restaurant=self.restaurant,
@@ -379,6 +511,7 @@ class WaiterAndPaymentApiTests(APITestCase):
             restaurant=self.restaurant,
             table=self.table,
             session=self.session,
+            guest=self.guest,
             status="READY",
             total_price=Decimal("95.00"),
         )
@@ -424,6 +557,11 @@ class WaiterAndPaymentApiTests(APITestCase):
         self.assertEqual(len(response.data["tables"]), 1)
         self.assertEqual(response.data["tables"][0]["table"], "Table W1")
         self.assertEqual(response.data["tables"][0]["orders"][0]["order_id"], self.order.public_token)
+        assert_guest_payload(self, response.data["tables"][0]["orders"][0]["guest"], self.guest)
+        self.assertNotIn("id", response.data["tables"][0]["orders"][0])
+        self.assertNotIn("guest_id", response.data["tables"][0]["orders"][0])
+        self.assertNotIn("session_id", response.data["tables"][0]["orders"][0])
+        self.assertNotIn("table_id", response.data["tables"][0]["orders"][0])
 
     def test_kitchen_cannot_access_waiter_tables(self):
         response = self.client.get(
@@ -445,6 +583,11 @@ class WaiterAndPaymentApiTests(APITestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, "SERVED")
         self.assertEqual(response.data["order_id"], self.order.public_token)
+        assert_guest_payload(self, response.data["guest"], self.guest)
+        self.assertNotIn("id", response.data)
+        self.assertNotIn("guest_id", response.data)
+        self.assertNotIn("session_id", response.data)
+        self.assertNotIn("table_id", response.data)
         self.assertTrue(
             AuditLog.objects.filter(
                 restaurant=self.restaurant,
@@ -558,6 +701,387 @@ class WaiterAndPaymentApiTests(APITestCase):
             self.assertEqual(second.data["error"]["message"], "rate limit exceeded")
 
 
+class TableRequestApiTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.restaurant = Restaurant.objects.create(name="Table Request Restaurant")
+        self.table = Table.objects.create(
+            restaurant=self.restaurant,
+            name="Table R1",
+            public_token="request_table_token",
+        )
+        self.session = TableSession.objects.create(
+            table=self.table,
+            session_token="sess_request_123",
+            expires_at=timezone.now() + timedelta(hours=2),
+        )
+        self.guest = SessionGuest.objects.create(
+            session=self.session,
+            guest_token="guest_request_123",
+            display_name="Request Guest",
+            avatar_color="#0891B2",
+        )
+        self.waiter_staff = self.create_staff(
+            username="request_waiter",
+            role=StaffRole.WAITER,
+        )
+        self.admin_staff = self.create_staff(
+            username="request_admin",
+            role=StaffRole.ADMIN,
+        )
+        self.kitchen_staff = self.create_staff(
+            username="request_kitchen",
+            role=StaffRole.KITCHEN,
+        )
+        self.waiter_token = self.login("request_waiter")
+        self.admin_token = self.login("request_admin")
+        self.kitchen_token = self.login("request_kitchen")
+
+        self.other_restaurant = Restaurant.objects.create(name="Other Table Request Restaurant")
+        self.other_table = Table.objects.create(
+            restaurant=self.other_restaurant,
+            name="Other Request Table",
+            public_token="other_request_table",
+        )
+        self.other_session = TableSession.objects.create(
+            table=self.other_table,
+            session_token="sess_other_request",
+            expires_at=timezone.now() + timedelta(hours=2),
+        )
+
+    def create_staff(self, *, username, role):
+        user = User.objects.create_user(username=username, password="Password123!")
+        return Staff.objects.create(
+            user=user,
+            restaurant=self.restaurant,
+            name=username,
+            role=role,
+        )
+
+    def login(self, username):
+        return self.client.post(
+            "/api/v1/staff/auth/login/",
+            {"username": username, "password": "Password123!"},
+            format="json",
+        ).data["access"]
+
+    def test_customer_can_create_table_request_for_active_session(self):
+        response = self.client.post(
+            "/api/v1/table/requests/",
+            {"type": TableRequestType.CALL_WAITER},
+            format="json",
+            HTTP_X_SESSION_TOKEN=self.session.session_token,
+            HTTP_X_GUEST_TOKEN=self.guest.guest_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["request_token"].startswith("treq_"))
+        self.assertEqual(response.data["type"], TableRequestType.CALL_WAITER)
+        self.assertEqual(response.data["status"], TableRequestStatus.OPEN)
+        self.assertNotIn("id", response.data)
+        self.assertNotIn("table_id", response.data)
+        self.assertNotIn("session_id", response.data)
+        self.assertNotIn("guest_id", response.data)
+
+        table_request = TableRequest.objects.get(request_token=response.data["request_token"])
+        self.assertEqual(table_request.restaurant_id, self.restaurant.id)
+        self.assertEqual(table_request.table_id, self.table.id)
+        self.assertEqual(table_request.session_id, self.session.id)
+        self.assertEqual(table_request.guest_id, self.guest.id)
+
+    def test_customer_table_request_validates_type_session_and_guest(self):
+        invalid_type = self.client.post(
+            "/api/v1/table/requests/",
+            {"type": "CUSTOM_MESSAGE"},
+            format="json",
+            HTTP_X_SESSION_TOKEN=self.session.session_token,
+        )
+        invalid_session = self.client.post(
+            "/api/v1/table/requests/",
+            {"type": TableRequestType.NEED_HELP},
+            format="json",
+            HTTP_X_SESSION_TOKEN="missing_session",
+        )
+        invalid_guest = self.client.post(
+            "/api/v1/table/requests/",
+            {"type": TableRequestType.REQUEST_BILL},
+            format="json",
+            HTTP_X_SESSION_TOKEN=self.session.session_token,
+            HTTP_X_GUEST_TOKEN="guest_missing",
+        )
+
+        self.assertEqual(invalid_type.status_code, status.HTTP_400_BAD_REQUEST)
+        assert_error_payload(self, invalid_type, code="invalid_request", message="invalid request")
+        self.assertEqual(invalid_session.status_code, status.HTTP_401_UNAUTHORIZED)
+        assert_error_payload(self, invalid_session, code="invalid_session", message="invalid session")
+        self.assertEqual(invalid_guest.status_code, status.HTTP_401_UNAUTHORIZED)
+        assert_error_payload(self, invalid_guest, code="invalid_guest", message="invalid guest")
+
+    def test_customer_can_list_current_session_table_requests_newest_first(self):
+        older_request = TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=self.session,
+            guest=self.guest,
+            request_type=TableRequestType.CALL_WAITER,
+        )
+        newer_request = TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=self.session,
+            request_type=TableRequestType.REQUEST_BILL,
+            status=TableRequestStatus.RESOLVED,
+            resolved_by=self.waiter_staff,
+            resolved_at=timezone.now(),
+        )
+        TableRequest.objects.filter(pk=older_request.pk).update(
+            created_at=timezone.now() - timedelta(minutes=5),
+        )
+        TableRequest.objects.filter(pk=newer_request.pk).update(
+            created_at=timezone.now() - timedelta(minutes=1),
+        )
+        other_session_request = TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=TableSession.objects.create(
+                table=self.table,
+                session_token="sess_request_same_table_other",
+                expires_at=timezone.now() + timedelta(hours=2),
+            ),
+            request_type=TableRequestType.NEED_HELP,
+        )
+        TableRequest.objects.create(
+            restaurant=self.other_restaurant,
+            table=self.other_table,
+            session=self.other_session,
+            request_type=TableRequestType.NEED_HELP,
+        )
+
+        response = self.client.get(
+            "/api/v1/table/requests/",
+            HTTP_X_SESSION_TOKEN=self.session.session_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [item["request_token"] for item in response.data["requests"]],
+            [newer_request.request_token, older_request.request_token],
+        )
+        self.assertNotIn(other_session_request.request_token, [item["request_token"] for item in response.data["requests"]])
+
+        newer_payload = response.data["requests"][0]
+        older_payload = response.data["requests"][1]
+        self.assertEqual(newer_payload["request_type"], TableRequestType.REQUEST_BILL)
+        self.assertEqual(newer_payload["status"], TableRequestStatus.RESOLVED)
+        self.assertIsNotNone(newer_payload["resolved_at"])
+        self.assertIsNone(newer_payload["guest"])
+        self.assertEqual(older_payload["request_type"], TableRequestType.CALL_WAITER)
+        self.assertEqual(older_payload["status"], TableRequestStatus.OPEN)
+        self.assertIsNone(older_payload["resolved_at"])
+        assert_guest_payload(self, older_payload["guest"], self.guest)
+
+        for payload in response.data["requests"]:
+            self.assertNotIn("id", payload)
+            self.assertNotIn("table_id", payload)
+            self.assertNotIn("session_id", payload)
+            self.assertNotIn("restaurant_id", payload)
+            self.assertNotIn("guest_id", payload)
+            self.assertNotIn("resolved_by_id", payload)
+            if payload["guest"]:
+                self.assertNotIn("id", payload["guest"])
+                self.assertNotIn("session_id", payload["guest"])
+                self.assertNotIn("guest_id", payload["guest"])
+
+    def test_customer_table_request_list_rejects_missing_session(self):
+        response = self.client.get("/api/v1/table/requests/")
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        assert_error_payload(self, response, code="invalid_session", message="invalid session")
+
+    def test_customer_table_request_list_rejects_invalid_session(self):
+        response = self.client.get(
+            "/api/v1/table/requests/",
+            HTTP_X_SESSION_TOKEN="missing_session",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        assert_error_payload(self, response, code="invalid_session", message="invalid session")
+
+    def test_customer_table_request_list_rejects_expired_session(self):
+        expired_session = TableSession.objects.create(
+            table=self.table,
+            session_token="sess_request_expired_customer",
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=expired_session,
+            request_type=TableRequestType.NEED_HELP,
+        )
+
+        response = self.client.get(
+            "/api/v1/table/requests/",
+            HTTP_X_SESSION_TOKEN=expired_session.session_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        assert_error_payload(self, response, code="expired_session", message="expired session")
+
+    def test_waiter_can_list_open_active_table_requests_scoped_to_restaurant(self):
+        open_request = TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=self.session,
+            guest=self.guest,
+            request_type=TableRequestType.NEED_HELP,
+        )
+        TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=self.session,
+            request_type=TableRequestType.REQUEST_BILL,
+            status=TableRequestStatus.RESOLVED,
+            resolved_by=self.waiter_staff,
+            resolved_at=timezone.now(),
+        )
+        expired_session = TableSession.objects.create(
+            table=self.table,
+            session_token="sess_request_expired",
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=expired_session,
+            request_type=TableRequestType.CALL_WAITER,
+        )
+        TableRequest.objects.create(
+            restaurant=self.other_restaurant,
+            table=self.other_table,
+            session=self.other_session,
+            request_type=TableRequestType.CALL_WAITER,
+        )
+
+        response = self.client.get(
+            "/api/v1/waiter/requests/",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["requests"]), 1)
+        payload = response.data["requests"][0]
+        self.assertEqual(payload["request_token"], open_request.request_token)
+        self.assertEqual(payload["type"], TableRequestType.NEED_HELP)
+        self.assertEqual(payload["status"], TableRequestStatus.OPEN)
+        self.assertEqual(payload["table"], "Table R1")
+        assert_guest_payload(self, payload["guest"], self.guest)
+        self.assertNotIn("id", payload)
+        self.assertNotIn("table_id", payload)
+        self.assertNotIn("session_id", payload)
+        self.assertNotIn("guest_id", payload)
+
+    def test_waiter_or_admin_can_resolve_table_request_and_audit_log_is_created(self):
+        table_request = TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=self.session,
+            guest=self.guest,
+            request_type=TableRequestType.REQUEST_BILL,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/waiter/requests/{table_request.request_token}/resolve/",
+            {},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["request_token"], table_request.request_token)
+        self.assertEqual(response.data["status"], TableRequestStatus.RESOLVED)
+        self.assertNotIn("id", response.data)
+        self.assertNotIn("table_id", response.data)
+        self.assertNotIn("session_id", response.data)
+        self.assertNotIn("guest_id", response.data)
+
+        table_request.refresh_from_db()
+        self.assertEqual(table_request.status, TableRequestStatus.RESOLVED)
+        self.assertEqual(table_request.resolved_by_id, self.waiter_staff.id)
+        self.assertIsNotNone(table_request.resolved_at)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                restaurant=self.restaurant,
+                actor_staff=self.waiter_staff,
+                action="waiter.table_request_resolved",
+                target_identifier=table_request.request_token,
+            ).exists()
+        )
+
+        admin_request = TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=self.session,
+            request_type=TableRequestType.NEED_HELP,
+        )
+        admin_response = self.client.patch(
+            f"/api/v1/waiter/requests/{admin_request.request_token}/resolve/",
+            {},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+
+    def test_table_request_resolution_is_role_and_restaurant_scoped(self):
+        table_request = TableRequest.objects.create(
+            restaurant=self.restaurant,
+            table=self.table,
+            session=self.session,
+            request_type=TableRequestType.CALL_WAITER,
+        )
+        other_request = TableRequest.objects.create(
+            restaurant=self.other_restaurant,
+            table=self.other_table,
+            session=self.other_session,
+            request_type=TableRequestType.CALL_WAITER,
+        )
+
+        kitchen_response = self.client.get(
+            "/api/v1/waiter/requests/",
+            HTTP_AUTHORIZATION=f"Bearer {self.kitchen_token}",
+        )
+        other_response = self.client.patch(
+            f"/api/v1/waiter/requests/{other_request.request_token}/resolve/",
+            {},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+        first_resolve = self.client.patch(
+            f"/api/v1/waiter/requests/{table_request.request_token}/resolve/",
+            {},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+        second_resolve = self.client.patch(
+            f"/api/v1/waiter/requests/{table_request.request_token}/resolve/",
+            {},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.waiter_token}",
+        )
+
+        self.assertEqual(kitchen_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(other_response.status_code, status.HTTP_404_NOT_FOUND)
+        assert_error_payload(self, other_response, code="table_request_not_found", message="table request not found")
+        self.assertEqual(first_resolve.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_resolve.status_code, status.HTTP_400_BAD_REQUEST)
+        assert_error_payload(
+            self,
+            second_resolve,
+            code="table_request_validation_error",
+            message="request already resolved",
+        )
+
+
 class CashierApiTests(APITestCase):
     def setUp(self):
         cache.clear()
@@ -616,6 +1140,14 @@ class CashierApiTests(APITestCase):
             status=OrderStatus.READY,
             total_price=Decimal("55.00"),
         )
+        self.ready_guest = SessionGuest.objects.create(
+            session=self.ready_order.session,
+            guest_token="guest_cashier_ready",
+            display_name="Cashier Guest",
+            avatar_color="#9333EA",
+        )
+        self.ready_order.guest = self.ready_guest
+        self.ready_order.save(update_fields=["guest", "updated_at"])
         self.paid_order = self.create_order(
             table=self.paid_table,
             session_token="sess_cashier_paid",
@@ -745,8 +1277,16 @@ class CashierApiTests(APITestCase):
         self.assertEqual(tables["Ready Table"]["order_id"], self.ready_order.public_token)
         self.assertEqual(tables["Ready Table"]["total_price"], "55.00")
         self.assertEqual(tables["Ready Table"]["payment_status"], "PENDING")
+        assert_guest_payload(self, tables["Ready Table"]["guest"], self.ready_guest)
+        self.assertEqual(tables["New Table"]["guest"], None)
+        self.assertEqual(tables["Empty Table"]["guest"], None)
         self.assertNotIn("table_id", tables["Ready Table"])
         self.assertNotIn("id", tables["Ready Table"])
+        self.assertNotIn("guest_id", tables["Ready Table"])
+        self.assertNotIn("session_id", tables["Ready Table"])
+        self.assertNotIn("id", tables["Ready Table"]["guest"])
+        self.assertNotIn("guest_id", tables["Ready Table"]["guest"])
+        self.assertNotIn("session_id", tables["Ready Table"]["guest"])
 
     def test_waiter_and_kitchen_cannot_access_cashier_tables(self):
         waiter_response = self.client.get(
@@ -776,8 +1316,14 @@ class CashierApiTests(APITestCase):
         self.assertEqual(response.data["order_id"], self.ready_order.public_token)
         self.assertEqual(response.data["order_status"], OrderStatus.READY)
         self.assertEqual(response.data["items"][0]["name"], "Cashier Pizza")
+        assert_guest_payload(self, response.data["guest"], self.ready_guest)
         self.assertNotIn("table_id", response.data)
         self.assertNotIn("id", response.data)
+        self.assertNotIn("guest_id", response.data)
+        self.assertNotIn("session_id", response.data)
+        self.assertNotIn("id", response.data["guest"])
+        self.assertNotIn("guest_id", response.data["guest"])
+        self.assertNotIn("session_id", response.data["guest"])
         self.assertEqual(other_response.status_code, status.HTTP_404_NOT_FOUND)
         assert_error_payload(self, other_response, code="table_not_found", message="table not found")
 
@@ -876,6 +1422,12 @@ class AdminOrderDashboardApiTests(APITestCase):
             session_token="sess_admin_123",
             expires_at=timezone.now() + timedelta(hours=2),
         )
+        self.guest = SessionGuest.objects.create(
+            session=self.session,
+            guest_token="guest_admin_123",
+            display_name="Admin Guest",
+            avatar_color="#EA580C",
+        )
         category = Category.objects.create(restaurant=self.restaurant, name="Main")
         self.item = MenuItem.objects.create(
             restaurant=self.restaurant,
@@ -888,6 +1440,7 @@ class AdminOrderDashboardApiTests(APITestCase):
             restaurant=self.restaurant,
             table=self.table,
             session=self.session,
+            guest=self.guest,
             status="SERVED",
             total_price=Decimal("300.00"),
         )
@@ -927,6 +1480,14 @@ class AdminOrderDashboardApiTests(APITestCase):
         self.assertEqual(len(response.data["orders"]), 1)
         self.assertEqual(response.data["orders"][0]["order_id"], self.order.public_token)
         self.assertEqual(response.data["orders"][0]["payment_status"], "PAID")
+        assert_guest_payload(self, response.data["orders"][0]["guest"], self.guest)
+        self.assertNotIn("id", response.data["orders"][0])
+        self.assertNotIn("guest_id", response.data["orders"][0])
+        self.assertNotIn("session_id", response.data["orders"][0])
+        self.assertNotIn("table_id", response.data["orders"][0])
+        self.assertNotIn("id", response.data["orders"][0]["guest"])
+        self.assertNotIn("guest_id", response.data["orders"][0]["guest"])
+        self.assertNotIn("session_id", response.data["orders"][0]["guest"])
 
     def test_admin_can_get_analytics_summary(self):
         response = self.client.get(

@@ -9,9 +9,16 @@ from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.menu.models import Category, MenuItem
-from apps.orders.services import create_order_for_session, update_order_status
+from apps.orders.models import TableRequestType
+from apps.orders.services import (
+    create_order_for_session,
+    create_table_request_for_session,
+    resolve_table_request,
+    update_order_status,
+)
 from apps.restaurants.models import Restaurant, Staff, StaffRole, Table
-from apps.sessions.models import TableSession
+from apps.sessions.models import SessionGuest, TableSession
+from apps.sessions.services import start_or_join_table_session
 from config.asgi import application
 
 User = get_user_model()
@@ -32,6 +39,12 @@ class OrderWebsocketTests(TransactionTestCase):
             session_token="sess_ws_123",
             expires_at=timezone.now() + timedelta(hours=2),
         )
+        SessionGuest.objects.create(
+            session=self.session,
+            guest_token="guest_ws_first",
+            display_name="Guest 1",
+            avatar_color="#2563EB",
+        )
         category = Category.objects.create(restaurant=restaurant, name="Drinks")
         self.cola = MenuItem.objects.create(
             restaurant=restaurant,
@@ -50,6 +63,7 @@ class OrderWebsocketTests(TransactionTestCase):
             username="waiter_ws_user",
             role=StaffRole.WAITER,
         )
+        self.waiter_staff = Staff.objects.get(user__username="waiter_ws_user")
         self.cashier_token = self._create_staff_access_token(
             restaurant=restaurant,
             username="cashier_ws_user",
@@ -60,6 +74,11 @@ class OrderWebsocketTests(TransactionTestCase):
             restaurant=other_restaurant,
             username="other_kitchen_ws_user",
             role=StaffRole.KITCHEN,
+        )
+        self.other_waiter_token = self._create_staff_access_token(
+            restaurant=other_restaurant,
+            username="other_waiter_ws_user",
+            role=StaffRole.WAITER,
         )
         self.other_cashier_token = self._create_staff_access_token(
             restaurant=other_restaurant,
@@ -75,6 +94,15 @@ class OrderWebsocketTests(TransactionTestCase):
 
     def test_staff_channels_require_access_token(self):
         async_to_sync(self._assert_staff_channels_require_access_token)()
+
+    def test_guest_joined_event_reaches_existing_customer_session_channel(self):
+        async_to_sync(self._assert_guest_joined_event_flow)()
+
+    def test_table_request_created_event_reaches_waiter_channel(self):
+        async_to_sync(self._assert_table_request_created_event_flow)()
+
+    def test_table_request_resolved_event_reaches_customer_session_channel(self):
+        async_to_sync(self._assert_table_request_resolved_event_flow)()
 
     async def _assert_order_created_event_flow(self):
         customer = WebsocketCommunicator(
@@ -201,6 +229,89 @@ class OrderWebsocketTests(TransactionTestCase):
         self.assertEqual(kitchen_close_code, 4401)
         self.assertEqual(waiter_close_code, 4401)
         self.assertEqual(cashier_close_code, 4401)
+
+    async def _assert_guest_joined_event_flow(self):
+        customer = WebsocketCommunicator(
+            application,
+            "/ws/orders/?session_token=sess_ws_123",
+        )
+        customer_connected, _ = await customer.connect()
+        self.assertTrue(customer_connected)
+
+        result = await database_sync_to_async(start_or_join_table_session)(table=self.table)
+
+        event = await customer.receive_json_from()
+        self.assertEqual(event["type"], "guest_joined")
+        self.assertEqual(event["guest_token"], result.guest.guest_token)
+        self.assertEqual(event["display_name"], "Guest 2")
+        self.assertEqual(event["avatar_color"], "#DC2626")
+        self.assertEqual(event["guest_count"], 2)
+        self.assertEqual(event["mode"], "lobby")
+        self.assertNotIn("id", event)
+        self.assertNotIn("session_id", event)
+        self.assertNotIn("table_id", event)
+
+        await customer.disconnect()
+
+    async def _assert_table_request_created_event_flow(self):
+        waiter = WebsocketCommunicator(application, f"/ws/waiter/?access_token={self.waiter_token}")
+        other_waiter = WebsocketCommunicator(
+            application,
+            f"/ws/waiter/?access_token={self.other_waiter_token}",
+        )
+
+        waiter_connected, _ = await waiter.connect()
+        other_waiter_connected, _ = await other_waiter.connect()
+        self.assertTrue(waiter_connected)
+        self.assertTrue(other_waiter_connected)
+
+        table_request = await database_sync_to_async(create_table_request_for_session)(
+            session=self.session,
+            request_type=TableRequestType.CALL_WAITER,
+        )
+
+        waiter_event = await waiter.receive_json_from()
+        self.assertEqual(waiter_event["type"], "table_request_created")
+        self.assertEqual(waiter_event["request_token"], table_request.request_token)
+        self.assertEqual(waiter_event["request_type"], TableRequestType.CALL_WAITER)
+        self.assertEqual(waiter_event["table"], "Table 9")
+        self.assertEqual(waiter_event["status"], "OPEN")
+        self.assertNotIn("id", waiter_event)
+        self.assertNotIn("table_id", waiter_event)
+        self.assertNotIn("session_id", waiter_event)
+        self.assertTrue(await other_waiter.receive_nothing())
+
+        await waiter.disconnect()
+        await other_waiter.disconnect()
+
+    async def _assert_table_request_resolved_event_flow(self):
+        customer = WebsocketCommunicator(
+            application,
+            "/ws/orders/?session_token=sess_ws_123",
+        )
+
+        customer_connected, _ = await customer.connect()
+        self.assertTrue(customer_connected)
+
+        table_request = await database_sync_to_async(create_table_request_for_session)(
+            session=self.session,
+            request_type=TableRequestType.REQUEST_BILL,
+        )
+        await database_sync_to_async(resolve_table_request)(
+            table_request=table_request,
+            actor_staff=self.waiter_staff,
+        )
+
+        customer_event = await customer.receive_json_from()
+        self.assertEqual(customer_event["type"], "table_request_resolved")
+        self.assertEqual(customer_event["request_token"], table_request.request_token)
+        self.assertEqual(customer_event["request_type"], TableRequestType.REQUEST_BILL)
+        self.assertEqual(customer_event["status"], "RESOLVED")
+        self.assertNotIn("id", customer_event)
+        self.assertNotIn("table_id", customer_event)
+        self.assertNotIn("session_id", customer_event)
+
+        await customer.disconnect()
 
     def _create_staff_access_token(self, *, restaurant, username, role):
         user = User.objects.create_user(username=username, password="Password123!")

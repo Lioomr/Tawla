@@ -39,6 +39,7 @@ The following core technologies are explicitly approved for the frontend impleme
 * **Client State**: Zustand
 * **Server State**: React Query (TanStack Query)
 * **Animations**: Framer Motion
+* **Smooth scroll**: Lenis — marketing site only (`/`), layered over native scroll for the scroll-driven experience; disabled on touch and under `prefers-reduced-motion`
 * **Data Grids**: TanStack Table
 
 ---
@@ -233,9 +234,16 @@ Frontend rule:
 
 Current implementation:
 
-* `useOrderWebSocket` applies lightweight status updates into the customer order query cache
+* `useOrderWebSocket` applies lightweight status updates into the customer order query cache,
+  and also handles shared-table `guest_joined` / `guest_updated` events (dispatched into
+  `useLobbyStore`). On reconnect and on order/guest events it invalidates the session-orders and
+  session-roster queries so REST re-supplies authoritative truth. It also validates
+  `table_request_resolved` payloads and dispatches a local browser event so the menu request
+  control can mark the matching open request resolved. Mounted on both `/menu` (so a solo device
+  flips to lobby live) and `/order/[order_id]`.
 * `useKitchenWebSocket` invalidates kitchen orders on realtime events
-* `useWaiterWebSocket` invalidates waiter tables on realtime events
+* `useWaiterWebSocket` invalidates waiter tables on order events, invalidates waiter request alerts
+  on `table_request_created`, and resyncs both queries on reconnect
 * All three sockets retry connection after a short delay on close
 
 ---
@@ -247,8 +255,8 @@ Current implemented routes:
 ### Customer
 
 * `/` - landing message instructing customers to scan the table QR code
-* `/t/[tableToken]` - session bootstrap from public table token
-* `/menu` - menu browsing and cart flow
+* `/t/[tableToken]` - session bootstrap from public table token (persists guest token, seeds lobby)
+* `/menu` - menu browsing, cart flow, and the shared-table lobby surface
 * `/order/[order_id]` - live order status
 * `/session-expired` - session expiry recovery page with re-scan instruction
 
@@ -290,9 +298,13 @@ Frontend state is split into:
 
 Implemented stores:
 
-* `useCustomerStore` - session token and session expiry persistence
+* `useCustomerStore` - session token, **guest token**, and session expiry persistence
 * `useCartStore` - cart items, notes, quantities, and subtotal helpers
 * `useStaffStore` - access token, refresh token, and staff profile persistence
+* `useLobbyStore` - shared-table lobby state (mode, guest_count, self identity,
+  known participants, this device's own order ids, one-time name-prompt flag).
+  Session-scoped: it resets when a different `session_token` is bootstrapped, so a
+  re-scan of another table never leaks the previous table's guests.
 
 Rules:
 
@@ -307,7 +319,7 @@ Implemented query usage:
 * `useMenu` - customer menu fetch
 * `useOrderQuery` - customer order detail fetch
 * Kitchen dashboard query - kitchen order list
-* Waiter dashboard query - waiter tables list
+* Waiter dashboard queries - waiter tables list and open table requests list
 
 Provider behavior:
 
@@ -326,6 +338,8 @@ Current implementation note:
 
 * Kitchen and waiter dashboards refetch from REST after realtime events instead of doing complex local merges
 * Customer order detail applies only the status delta from the customer socket
+* Customer table requests are created through `POST /table/requests/`; resolved state comes from the
+  validated `table_request_resolved` socket event because there is no customer-side request-list API
 * Cashier dashboard will follow the same pattern as waiter: refetch on realtime event
 
 ---
@@ -359,6 +373,60 @@ Rules:
 
 ---
 
+## Shared Table Lobby System
+
+The customer app supports a shared-table lobby on top of the single-device flow.
+
+Flow:
+
+1. `POST /table/session/start/` returns `mode` (`solo` | `lobby`), `guest_count`, and a
+   `guest_token`. The first device gets `solo` and goes straight to the menu — no lobby UI,
+   no name prompt.
+2. When a second device scans the same table, the backend broadcasts `guest_joined` on the
+   customer session socket. A device already in `solo` flips to `lobby` live, shows a small
+   "guest joined" toast, and only then surfaces a skippable display-name prompt.
+3. The participant list is hydrated from the authoritative roster endpoint
+   `GET /table/session/` (`{ mode, guest_count, current_guest, guests[] }`), fetched on
+   menu/lobby load, after session start, on socket reconnect, and after guest events.
+   Realtime `guest_joined` / `guest_updated` supply live deltas between fetches. The lobby bar
+   shows the participants (self + others) and the total count.
+4. Display names are optional and edited via `PATCH /table/session/guest/`. Validation mirrors
+   the backend (trim, collapse whitespace, max 40, reject control chars and `<>`).
+5. In lobby mode the cart shows an editable "your items" section plus a read-only "ordered at
+   this table" list from `GET /orders/`, with each order labelled by guest.
+
+Order guest attribution:
+
+* `GET /orders/` and `GET /orders/{token}/` return a nullable `guest` object
+  (`{ guest_token, display_name, avatar_color }` or `null`). Types live in `src/lib/api.ts`
+  (`OrderGuest`, on `OrderSummary` and `OrderDetailsResponse`).
+* The lobby table-orders list labels each order with the guest's avatar + name. The current
+  user's orders are marked "you" via `isOwnOrder` — preferring the server's `guest_token`
+  match, falling back to this device's own order ids for un-attributed orders.
+* `guest` is validated defensively (`normalizeOrderGuest`) and `guest: null` renders gracefully
+  as the table's order (view-only, neutral placeholder) — solo flow is unaffected.
+
+Roster hydration (`useSessionRoster`):
+
+* `GET /table/session/` requires both `X-Session-Token` and `X-Guest-Token` and returns the full
+  participant list plus `current_guest`. The response is validated defensively
+  (`normalizeRoster`) before it touches the store; `applyRoster` then replaces the participant
+  map and adopts the server's authoritative self identity (name/colour/guest number).
+* Errors map to recovery via the stable error code (`classifyRosterError`):
+  `invalid_session` / `expired_session` → session-expired page; `invalid_guest` → clear the
+  guest token and reset lobby (graceful fallback; session ordering still works).
+
+Honest-data rules:
+
+* `solo` vs `lobby` is always taken from the backend; the frontend never recomputes it.
+* All server data (roster, guests, order attribution) is validated before storing/rendering.
+* No invented flows: no heartbeat, leave flow, split bill, host mode, or payment sharing.
+
+Pure, unit-tested lobby logic (validation, default name/colour, roster, ownership) lives in
+`src/lib/lobby.ts` with specs in `src/lib/lobby.test.ts` (run via `node --test`).
+
+---
+
 ## API Client Pattern
 
 `src/lib/api.ts` is the canonical frontend transport layer.
@@ -366,10 +434,14 @@ Rules:
 Responsibilities:
 
 * Set `X-Session-Token` for customer APIs
+* Set `X-Guest-Token` for guest-scoped customer actions (guest update, order attribution)
 * Set `Authorization: Bearer <access_token>` for staff APIs
 * Parse the unified backend error payload
 * Throw `ApiError` with stable `code` and `status`
-* Expose explicit methods for session, menu, order, auth, kitchen, waiter, and payment flows
+* Expose explicit methods for session, menu, order, auth, kitchen, waiter, and payment flows,
+  including `updateGuestDisplayName` (`PATCH /table/session/guest/`), `getSessionRoster`
+  (`GET /table/session/`), `getSessionOrders` (`GET /orders/`) for the shared-table lobby, customer
+  table-request creation, waiter request listing, and waiter request resolution
 
 Rules:
 

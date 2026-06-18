@@ -1,5 +1,7 @@
 import { MenuCategory } from "@/lib/api";
 import { getTextDir } from "@/lib/branding";
+import { useLanguage } from "@/lib/i18n";
+import { localizeMenuName } from "@/lib/menuTranslations";
 import { MenuItemCard } from "./MenuItemCard";
 
 interface CategorySectionProps {
@@ -7,7 +9,9 @@ interface CategorySectionProps {
 }
 
 export function CategorySection({ category }: CategorySectionProps) {
+  const { language } = useLanguage();
   if (!category.items || category.items.length === 0) return null;
+  const categoryName = localizeMenuName(category.name, language);
 
   return (
     <div id={`category-${category.id}`} className="pt-8 pb-4 scroll-mt-[140px]">
@@ -28,11 +32,11 @@ export function CategorySection({ category }: CategorySectionProps) {
           </div>
         )}
         <h2
-          dir={getTextDir(category.name)}
+          dir={getTextDir(categoryName)}
           className="text-2xl font-extrabold tracking-tight text-start"
           style={{ color: "var(--brand-accent)" }}
         >
-          {category.name}
+          {categoryName}
         </h2>
       </div>
       <div className="flex flex-col">

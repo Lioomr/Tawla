@@ -1,16 +1,55 @@
+import type { Metadata } from 'next';
+import { Archivo, Geist_Mono, IBM_Plex_Sans_Arabic } from 'next/font/google';
+import { MarketingSite } from '@/components/marketing/MarketingSite';
+
+// Display face: Archivo variable, used wide (font-stretch 125%) and heavy for
+// headlines only. Signage DNA — confident, operational, not a default stack.
+const archivo = Archivo({
+  subsets: ['latin'],
+  axes: ['wdth'],
+  variable: '--font-display-latin',
+  display: 'swap',
+});
+
+// Utility face for the operational layer: timestamps, table codes, statuses.
+// The receipt/ticket vernacular of the restaurant world.
+const geistMono = Geist_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-marketing-mono',
+  display: 'swap',
+});
+
+// Arabic-capable face; Geist (the app default) only covers Latin. Also serves
+// as the Arabic display face since Archivo has no Arabic glyphs.
+const plexArabic = IBM_Plex_Sans_Arabic({
+  subsets: ['arabic', 'latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-arabic',
+  display: 'swap',
+});
+
+export const metadata: Metadata = {
+  title: 'Tawlax — Restaurant Operating System | نظام تشغيل المطاعم',
+  description:
+    'Tawlax is a real-time Restaurant Operating System for Egypt & MENA. QR/NFC table ordering, live kitchen display, waiter coordination, and owner dashboards. — نظام تشغيل مطاعم يعمل في الوقت الفعلي: طلب من الطاولة عبر QR وNFC وشاشة مطبخ حيّة.',
+  openGraph: {
+    title: 'Tawlax — Restaurant Operating System',
+    description:
+      'QR/NFC table ordering, live kitchen display, waiter coordination, and owner dashboards. Built for Egypt & MENA service.',
+    type: 'website',
+    images: [{ url: '/marketing/og.png', width: 1200, height: 630, alt: 'tawlax — the restaurant operating system' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    images: ['/marketing/og.png'],
+  },
+};
+
 export default function Home() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4">
-      <div className="max-w-md w-full flex flex-col items-center justify-center space-y-4 text-center">
-        <h1 className="text-4xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Scan to order
-        </h1>
-        <div className="p-6 bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-zinc-100 dark:border-zinc-800">
-          <p className="text-zinc-600 dark:text-zinc-400 font-medium">
-            Please scan the QR code on your table to view the menu and start ordering.
-          </p>
-        </div>
-      </div>
-    </div>
+    <MarketingSite
+      fontClasses={`${archivo.variable} ${geistMono.variable} ${plexArabic.variable}`}
+    />
   );
 }

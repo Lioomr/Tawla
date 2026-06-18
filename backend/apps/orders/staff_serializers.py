@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
-from apps.orders.models import Order, OrderStatus, Payment, PaymentStatus
-from apps.orders.serializers import OrderItemResponseSerializer
+from apps.orders.models import Order, OrderStatus, Payment, PaymentStatus, TableRequest
+from apps.orders.serializers import OrderGuestSerializer, OrderItemResponseSerializer
 
 
 class CashierTableStatus:
@@ -23,10 +23,11 @@ class KitchenOrderSummarySerializer(serializers.ModelSerializer):
     order_id = serializers.CharField(source="public_token")
     table = serializers.CharField(source="table.name")
     items = OrderItemResponseSerializer(many=True)
+    guest = OrderGuestSerializer(read_only=True)
 
     class Meta:
         model = Order
-        fields = ["order_id", "table", "status", "created_at", "items"]
+        fields = ["order_id", "table", "status", "created_at", "items", "guest"]
 
 
 class KitchenOrderStatusUpdateSerializer(serializers.Serializer):
@@ -40,10 +41,11 @@ class WaiterOrderServeSerializer(serializers.Serializer):
 class WaiterTableOrderSerializer(serializers.ModelSerializer):
     order_id = serializers.CharField(source="public_token")
     payment_status = serializers.SerializerMethodField()
+    guest = OrderGuestSerializer(read_only=True)
 
     class Meta:
         model = Order
-        fields = ["order_id", "status", "total_price", "created_at", "payment_status"]
+        fields = ["order_id", "status", "total_price", "created_at", "payment_status", "guest"]
 
     def get_payment_status(self, obj):
         try:
@@ -81,8 +83,27 @@ class CashierTableSummarySerializer(serializers.Serializer):
     order_id = serializers.CharField(allow_null=True)
     total_price = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
     payment_status = serializers.CharField(allow_null=True)
+    guest = OrderGuestSerializer(allow_null=True)
 
 
 class CashierTableOrderDetailSerializer(CashierTableSummarySerializer):
     order_status = serializers.CharField(allow_null=True)
     items = OrderItemResponseSerializer(many=True)
+
+
+class WaiterTableRequestSerializer(serializers.ModelSerializer):
+    type = serializers.CharField(source="request_type")
+    table = serializers.CharField(source="table.name")
+    guest = OrderGuestSerializer(read_only=True)
+
+    class Meta:
+        model = TableRequest
+        fields = [
+            "request_token",
+            "type",
+            "status",
+            "table",
+            "created_at",
+            "resolved_at",
+            "guest",
+        ]

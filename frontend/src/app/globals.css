@@ -134,3 +134,41 @@
     @apply font-sans;
     }
 }
+
+/*
+ * ── Marketing-only depth & motion helpers ──────────────────────────────────
+ * Scoped by the `mk-` prefix and only referenced from src/components/marketing.
+ * They never touch the customer/staff/admin surfaces.
+ */
+
+/* Layered, soft "floating object" shadow — warm stone-tinted, not flat gray. */
+.mk-elevate {
+  box-shadow:
+    0 1px 1px rgba(28, 25, 23, 0.04),
+    0 4px 8px -2px rgba(28, 25, 23, 0.06),
+    0 16px 28px -10px rgba(28, 25, 23, 0.12),
+    0 36px 56px -28px rgba(28, 25, 23, 0.20);
+}
+.mk-elevate-sm {
+  box-shadow:
+    0 1px 1px rgba(28, 25, 23, 0.04),
+    0 8px 18px -8px rgba(28, 25, 23, 0.14);
+}
+
+/* Lenis smooth scroll: while active, Lenis owns scroll easing, so native
+   scroll-behavior must step aside. These rules only take effect once Lenis
+   adds its classes (pointer-fine, motion allowed); touch / reduced-motion keep
+   plain native scrolling. */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
